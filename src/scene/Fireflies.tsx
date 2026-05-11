@@ -34,7 +34,7 @@ export default function Fireflies() {
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
-          uSize: { value: 18 },
+          uSize: { value: 11 },
         },
         vertexShader: /* glsl */ `
           attribute vec3 aSeed;
@@ -60,7 +60,7 @@ export default function Fireflies() {
             float dist = length(d);
             if (dist > 0.5) discard;
             float intensity = smoothstep(0.5, 0.0, dist);
-            vec3 gold = vec3(1.0, 0.85, 0.45);
+            vec3 gold = vec3(0.85, 0.7, 0.35);
             gl_FragColor = vec4(gold * intensity * vAlpha, intensity * vAlpha);
           }
         `,

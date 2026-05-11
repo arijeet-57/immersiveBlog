@@ -15,37 +15,70 @@ import {
 } from 'three';
 
 const COUNT = 10_000;
-const FIELD_SIZE = 40;
-const RIPPLE_RADIUS = 3;
+const FIELD_SIZE = 36;
+const RIPPLE_RADIUS = 2.4;
 const RIPPLE_HALF_LIFE = 0.4;
 
-// Rounded 5-petal silhouette built from a high-vertex perimeter using
-// r(θ) = inner + amplitude * |cos(2.5θ)|^k. Center vertex anchors the
-// triangle fan. UV.y = 1 at center, 0 at perimeter — shader uses this
-// for the bright white-starburst gradient.
+const STEM_HEIGHT = 0.65;
+const STEM_RADIUS = 0.025;
+const HEAD_PERIMETER = 30;
+const HEAD_INNER_R = 0.30;
+const HEAD_AMPLITUDE = 0.78;
+const HEAD_SHARPNESS = 0.55;
+const HEAD_CUP = 0.18; // petal tips curl up — makes the head 3D, not flat
+const STEM_SIDES = 6;
+
+// Single merged geometry: dark-green stem (cylinder, no caps) + cupped
+// 5-petal head at the top. Per-vertex `position.y` is later used in the
+// fragment shader to branch stem (low y) vs head (high y).
 function buildFlowerGeometry(): BufferGeometry {
-  const g = new BufferGeometry();
-  const PERIMETER = 60;
-  const innerR = 0.32;
-  const amplitude = 0.78;
-  const sharpness = 0.55;
-
-  const positions: number[] = [0, 0, 0];
-  const uvs: number[] = [0.5, 1.0];
-
-  for (let i = 0; i < PERIMETER; i++) {
-    const theta = (i / PERIMETER) * Math.PI * 2;
-    const lobe = Math.pow(Math.abs(Math.cos(2.5 * theta)), sharpness);
-    const r = innerR + amplitude * lobe;
-    positions.push(Math.cos(theta) * r, 0, Math.sin(theta) * r);
-    uvs.push(0.5 + Math.cos(theta) * 0.5, 0.0);
-  }
-
+  const positions: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
-  for (let i = 0; i < PERIMETER; i++) {
-    indices.push(0, i + 1, ((i + 1) % PERIMETER) + 1);
+
+  // Stem: two rings (bottom y=0, top y=STEM_HEIGHT)
+  for (let ring = 0; ring < 2; ring++) {
+    const y = ring === 0 ? 0 : STEM_HEIGHT;
+    for (let i = 0; i < STEM_SIDES; i++) {
+      const a = (i / STEM_SIDES) * Math.PI * 2;
+      positions.push(Math.cos(a) * STEM_RADIUS, y, Math.sin(a) * STEM_RADIUS);
+      uvs.push(0.5, 0.0); // unused for stem path
+    }
+  }
+  for (let i = 0; i < STEM_SIDES; i++) {
+    const bot1 = i;
+    const bot2 = (i + 1) % STEM_SIDES;
+    const top1 = STEM_SIDES + i;
+    const top2 = STEM_SIDES + ((i + 1) % STEM_SIDES);
+    indices.push(bot1, bot2, top2);
+    indices.push(bot1, top2, top1);
   }
 
+  // Head: center vertex (UV.y=1) + perimeter vertices (UV.y=0), cupped
+  const headCenter = positions.length / 3;
+  positions.push(0, STEM_HEIGHT + HEAD_CUP * 0.25, 0);
+  uvs.push(0.5, 1.0);
+
+  for (let i = 0; i < HEAD_PERIMETER; i++) {
+    const theta = (i / HEAD_PERIMETER) * Math.PI * 2;
+    const lobe = Math.pow(Math.abs(Math.cos(2.5 * theta)), HEAD_SHARPNESS);
+    const r = HEAD_INNER_R + HEAD_AMPLITUDE * lobe;
+    const x = Math.cos(theta) * r;
+    const z = Math.sin(theta) * r;
+    const y = STEM_HEIGHT + HEAD_CUP * lobe; // tips curl upward
+    positions.push(x, y, z);
+    uvs.push(0.5, 0.0);
+  }
+
+  for (let i = 0; i < HEAD_PERIMETER; i++) {
+    indices.push(
+      headCenter,
+      headCenter + i + 1,
+      headCenter + ((i + 1) % HEAD_PERIMETER) + 1
+    );
+  }
+
+  const g = new BufferGeometry();
   g.setIndex(indices);
   g.setAttribute('position', new Float32BufferAttribute(positions, 3));
   g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
@@ -57,7 +90,8 @@ function buildFlowerMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uEmissiveStrength: { value: 2.4 },
+      uEmissiveStrength: { value: 0.55 },
+      uStemThreshold: { value: STEM_HEIGHT * 0.85 },
     },
     vertexShader: /* glsl */ `
       attribute float aBoost;
@@ -66,42 +100,57 @@ function buildFlowerMaterial(): ShaderMaterial {
       uniform float uTime;
       varying float vBoost;
       varying vec3 vColor;
+      varying float vY;
       varying float vRadial;
 
       void main() {
         vBoost = aBoost;
         vColor = aColor;
-        vRadial = uv.y;
+        vY = position.y;
+        // vRadial: 1 at center axis, 0 at petal edge. Only meaningful
+        // for the head (vY > stem threshold); the fragment branches.
+        float horiz = length(position.xz);
+        vRadial = 1.0 - smoothstep(0.05, 0.55, horiz);
+
         vec3 p = position;
-        // gentle vertical breath, phase-offset per instance
-        p.y += sin(uTime * 1.2 + aSeed * 6.2831) * 0.015;
+        // gentle sway — only the head sways, not the stem
+        float headMask = smoothstep(0.2, 0.6, position.y);
+        float sway = sin(uTime * 0.9 + aSeed * 6.2831) * 0.012;
+        p.x += sway * headMask;
+        p.z += cos(uTime * 0.7 + aSeed * 6.2831) * 0.012 * headMask;
+
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
       }
     `,
     fragmentShader: /* glsl */ `
       varying float vBoost;
       varying vec3 vColor;
+      varying float vY;
       varying float vRadial;
       uniform float uEmissiveStrength;
+      uniform float uStemThreshold;
 
       void main() {
-        // Petals are a deeper saturated blue; multiply by 0.9 so they
-        // don't blow out bloom — only the center should be HDR-bright.
-        vec3 petal = vColor * 0.9;
+        vec3 col;
+        if (vY < uStemThreshold) {
+          // Stem: dark foliage green, NOT emissive — should not bloom.
+          col = vec3(0.022, 0.045, 0.028);
+        } else {
+          // Petal: deep saturated royal blue, dim by default.
+          vec3 petal = vColor * 0.42;
+          // Cyan halo around the bright core.
+          float halo = smoothstep(0.55, 0.92, vRadial);
+          vec3 cyan = vec3(0.30, 0.55, 0.80);
+          // Hot white core — just bright enough that bloom catches it
+          // as a small luminous point per flower, not the whole petal.
+          float core = smoothstep(0.88, 1.0, vRadial);
+          vec3 hotWhite = vec3(1.30, 1.45, 1.65);
 
-        // The starburst core: a tight hot white peak (HDR > 1) so bloom
-        // turns each center into a luminous point. Cyan-tinted halo
-        // between core and petal edges.
-        float core   = smoothstep(0.80, 1.00, vRadial);
-        float halo   = smoothstep(0.55, 0.90, vRadial);
-        vec3 hotWhite = vec3(3.2, 3.4, 3.8);
-        vec3 cyan     = vec3(0.55, 0.95, 1.20);
-
-        vec3 col = petal;
-        col = mix(col, cyan, halo * 0.6);
-        col = mix(col, hotWhite, core);
-
-        col *= uEmissiveStrength * (1.0 + vBoost * 2.5);
+          col = petal;
+          col = mix(col, cyan, halo * 0.55);
+          col = mix(col, hotWhite, core);
+          col *= uEmissiveStrength * (1.0 + vBoost * 1.8);
+        }
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -112,7 +161,7 @@ function buildFlowerMaterial(): ShaderMaterial {
 
 export default function FlowerField() {
   const meshRef = useRef<InstancedMesh>(null);
-  const positionsRef = useRef(new Float32Array(COUNT * 2)); // xz only
+  const positionsRef = useRef(new Float32Array(COUNT * 2));
   const boostsRef = useRef(new Float32Array(COUNT));
   const mouseWorld = useRef<Vector3 | null>(null);
 
@@ -133,12 +182,17 @@ export default function FlowerField() {
     for (let i = 0; i < COUNT; i++) {
       const x = (Math.random() - 0.5) * FIELD_SIZE;
       const z = (Math.random() - 0.5) * FIELD_SIZE;
-      pos.set(x, (Math.random() - 0.5) * 0.05, z);
+      const yJit = (Math.random() - 0.5) * 0.04;
+      pos.set(x, yJit, z);
       positions[i * 2] = x;
       positions[i * 2 + 1] = z;
-      e.set(0, Math.random() * Math.PI * 2, 0);
+      // Slight tilt off vertical so the carpet doesn't look like a sheet.
+      const pitch = (Math.random() - 0.5) * 0.35;
+      const yaw = Math.random() * Math.PI * 2;
+      const roll = (Math.random() - 0.5) * 0.35;
+      e.set(pitch, yaw, roll, 'YXZ');
       q.setFromEuler(e);
-      const s = 0.35 + Math.random() * 0.25;
+      const s = 0.55 + Math.random() * 0.35;
       scale.set(s, s, s);
       m.compose(pos, q, scale);
       mesh.setMatrixAt(i, m);
@@ -150,13 +204,10 @@ export default function FlowerField() {
     const baseColor = new Color();
     for (let i = 0; i < COUNT; i++) {
       seeds[i] = Math.random();
-      // blue with subtle hue jitter (cyan ↔ royal blue), varied brightness
-      // Reference flowers are deep saturated royal-blue, not cyan.
-      // Hue centered around 0.63 (~ #2230ff range) with small jitter.
       baseColor.setHSL(
         0.625 + (Math.random() - 0.5) * 0.04,
-        0.95,
-        0.42 + Math.random() * 0.12
+        0.92,
+        0.42 + Math.random() * 0.10
       );
       colors[i * 3] = baseColor.r;
       colors[i * 3 + 1] = baseColor.g;
@@ -176,12 +227,9 @@ export default function FlowerField() {
 
     const boosts = boostsRef.current;
     const positions = positionsRef.current;
-
-    // exponential decay with ~0.4s half-life
     const decay = Math.pow(0.5, dt / RIPPLE_HALF_LIFE);
     for (let i = 0; i < boosts.length; i++) boosts[i] *= decay;
 
-    // apply mouse proximity boost
     const mp = mouseWorld.current;
     if (mp) {
       const mx = mp.x;
@@ -192,8 +240,8 @@ export default function FlowerField() {
         const dz = positions[i * 2 + 1] - mz;
         const d2 = dx * dx + dz * dz;
         if (d2 < r2) {
-          const k = 1 - d2 / r2; // 0..1
-          const target = 0.5 * k;
+          const k = 1 - d2 / r2;
+          const target = 0.55 * k;
           if (boosts[i] < target) boosts[i] = target;
         }
       }
@@ -206,7 +254,6 @@ export default function FlowerField() {
   return (
     <>
       <instancedMesh ref={meshRef} args={[geometry, material, COUNT]} frustumCulled={false} />
-      {/* Invisible hover plane — captures pointer position in world space. */}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0.001, 0]}
