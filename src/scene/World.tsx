@@ -2,6 +2,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Suspense, useRef } from 'react';
 import type { Mesh } from 'three';
 import PostFX from './PostFX';
+import CameraRig from './CameraRig';
 
 function TestCube() {
   const ref = useRef<Mesh>(null);
@@ -29,12 +30,13 @@ export default function World() {
     <Canvas
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 2]}
-      camera={{ position: [0, 0, 4], fov: 45, near: 0.1, far: 1000 }}
+      camera={{ position: [0, 80, 0], fov: 45, near: 0.1, far: 1000 }}
       style={{ position: 'fixed', inset: 0, background: '#000' }}
     >
       <color attach="background" args={['#000000']} />
       <ambientLight intensity={0.15} />
       <Suspense fallback={null}>
+        <CameraRig />
         <TestCube />
         <PostFX />
       </Suspense>
