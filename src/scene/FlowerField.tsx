@@ -23,19 +23,23 @@ const STEM_HEIGHT = 0.6;
 const STEM_RADIUS = 0.028;
 const STEM_SIDES = 6;
 
-const PETALS = 6;
-const PETAL_LEN = 0.62;
-const PETAL_WIDTH = 0.32;
-const PETAL_CUP = 0.10;
-const PETAL_PITCH = 0.35;
-const PETAL_SEG_V = 8; // along petal
-const PETAL_SEG_U = 5; // across petal
+// Reference: hepatica-style — 7 broad overlapping petals, nearly horizontal
+// with a slight upward tip curl. Petal half-width at mid-length is ~0.22,
+// angular spacing 360/7 ≈ 51° → petals overlap by ~40° each side.
+const PETALS = 7;
+const PETAL_LEN = 0.55;
+const PETAL_WIDTH = 0.46;
+const PETAL_CUP = 0.14;
+const PETAL_PITCH = 0.16;
+const PETAL_SEG_V = 8;
+const PETAL_SEG_U = 5;
 
-const STAMEN_COUNT = 14;
-const STAMEN_RING_R = 0.10;
-const STAMEN_BASE_R = 0.010;
-const STAMEN_TIP_R = 0.018;
-const STAMEN_HEIGHT = 0.07;
+// ~22 thin tall filaments — should read as a fine bristly cluster, not rods.
+const STAMEN_COUNT = 22;
+const STAMEN_RING_R = 0.085;
+const STAMEN_BASE_R = 0.005;
+const STAMEN_TIP_R = 0.0075;
+const STAMEN_HEIGHT = 0.105;
 const STAMEN_SIDES = 4;
 
 const PISTIL_R = 0.045;
@@ -81,8 +85,9 @@ function buildFlowerGeometry(): BufferGeometry {
 
     for (let row = 0; row <= PETAL_SEG_V; row++) {
       const v = row / PETAL_SEG_V; // 0 at base, 1 at tip
-      // Teardrop width: peaks ~v=0.4, narrows toward both ends.
-      const w = PETAL_WIDTH * Math.sin(v * Math.PI) * (0.7 + 0.3 * (1 - v));
+      // Broad oval — width peaks at v=0.5. Reference petals are nearly
+      // circular silhouettes, not teardrops.
+      const w = PETAL_WIDTH * Math.pow(Math.sin(v * Math.PI), 0.75);
 
       for (let col = 0; col <= PETAL_SEG_U; col++) {
         const u = col / PETAL_SEG_U; // 0..1 across width
@@ -244,12 +249,15 @@ function buildFlowerMaterial(): ShaderMaterial {
         } else if (vRegion < 0.55) {
           // Petal: base→tip gradient — darker saturated at base, brighter
           // and slightly cyaner toward the tip. Subtle rim from normal.
-          vec3 petalBase = vColor * 0.30;
-          vec3 petalTip  = vColor * 0.62 + vec3(0.06, 0.10, 0.14);
+          // Saturated electric blue. Slightly lighter near the base (where
+          // petals catch ambient bounce) and a touch darker / less saturated
+          // toward the tips so silhouettes read cleanly.
+          vec3 petalBase = vColor * 0.78 + vec3(0.04, 0.06, 0.10);
+          vec3 petalTip  = vColor * 0.55;
           col = mix(petalBase, petalTip, vU);
-          // soft cyan inner glow near the base (cup interior)
+          // Subtle inner-cup cyan brightening near the stamen ring.
           float innerCup = (1.0 - vU) * 0.4;
-          col = mix(col, vec3(0.18, 0.36, 0.62), innerCup * 0.45);
+          col = mix(col, vec3(0.25, 0.45, 0.75), innerCup * 0.35);
           // Lambert-ish facing factor — petals facing up get slight lift.
           float face = clamp(vNormal.y, 0.0, 1.0);
           col *= mix(0.85, 1.15, face);
@@ -313,10 +321,12 @@ export default function FlowerField() {
     const baseColor = new Color();
     for (let i = 0; i < COUNT; i++) {
       seeds[i] = Math.random();
+      // Electric cobalt-royal: hue ~0.62, near-max saturation, lifted L
+      // so the petal reads as glowing blue at default exposure.
       baseColor.setHSL(
-        0.625 + (Math.random() - 0.5) * 0.035,
-        0.95,
-        0.42 + Math.random() * 0.08
+        0.62 + (Math.random() - 0.5) * 0.025,
+        1.0,
+        0.50 + Math.random() * 0.06
       );
       colors[i * 3] = baseColor.r;
       colors[i * 3 + 1] = baseColor.g;
