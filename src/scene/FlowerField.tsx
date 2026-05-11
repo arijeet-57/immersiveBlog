@@ -15,31 +15,35 @@ import {
 } from 'three';
 
 const COUNT = 10_000;
-const FIELD_SIZE = 60;
+const FIELD_SIZE = 40;
 const RIPPLE_RADIUS = 3;
 const RIPPLE_HALF_LIFE = 0.4;
 
-// 5-pointed flower: center vertex + 10 perimeter (alternating tip/valley).
-// UV.y = 1 at center, 0 at perimeter — shader uses this for white-center gradient.
+// Rounded 5-petal silhouette built from a high-vertex perimeter using
+// r(θ) = inner + amplitude * |cos(2.5θ)|^k. Center vertex anchors the
+// triangle fan. UV.y = 1 at center, 0 at perimeter — shader uses this
+// for the bright white-starburst gradient.
 function buildFlowerGeometry(): BufferGeometry {
   const g = new BufferGeometry();
-  const petals = 5;
-  const outerR = 1.0;
-  const innerR = 0.42;
+  const PERIMETER = 60;
+  const innerR = 0.32;
+  const amplitude = 0.78;
+  const sharpness = 0.55;
 
   const positions: number[] = [0, 0, 0];
   const uvs: number[] = [0.5, 1.0];
 
-  for (let i = 0; i < petals * 2; i++) {
-    const angle = (i / (petals * 2)) * Math.PI * 2;
-    const r = i % 2 === 0 ? outerR : innerR;
-    positions.push(Math.cos(angle) * r, 0, Math.sin(angle) * r);
-    uvs.push(0.5 + Math.cos(angle) * 0.5, 0.0);
+  for (let i = 0; i < PERIMETER; i++) {
+    const theta = (i / PERIMETER) * Math.PI * 2;
+    const lobe = Math.pow(Math.abs(Math.cos(2.5 * theta)), sharpness);
+    const r = innerR + amplitude * lobe;
+    positions.push(Math.cos(theta) * r, 0, Math.sin(theta) * r);
+    uvs.push(0.5 + Math.cos(theta) * 0.5, 0.0);
   }
 
   const indices: number[] = [];
-  for (let i = 0; i < petals * 2; i++) {
-    indices.push(0, i + 1, ((i + 1) % (petals * 2)) + 1);
+  for (let i = 0; i < PERIMETER; i++) {
+    indices.push(0, i + 1, ((i + 1) % PERIMETER) + 1);
   }
 
   g.setIndex(indices);
@@ -81,8 +85,22 @@ function buildFlowerMaterial(): ShaderMaterial {
       uniform float uEmissiveStrength;
 
       void main() {
-        vec3 centerColor = vec3(1.0, 0.98, 0.92);
-        vec3 col = mix(vColor, centerColor, smoothstep(0.55, 1.0, vRadial));
+        // Petals are a deeper saturated blue; multiply by 0.9 so they
+        // don't blow out bloom — only the center should be HDR-bright.
+        vec3 petal = vColor * 0.9;
+
+        // The starburst core: a tight hot white peak (HDR > 1) so bloom
+        // turns each center into a luminous point. Cyan-tinted halo
+        // between core and petal edges.
+        float core   = smoothstep(0.80, 1.00, vRadial);
+        float halo   = smoothstep(0.55, 0.90, vRadial);
+        vec3 hotWhite = vec3(3.2, 3.4, 3.8);
+        vec3 cyan     = vec3(0.55, 0.95, 1.20);
+
+        vec3 col = petal;
+        col = mix(col, cyan, halo * 0.6);
+        col = mix(col, hotWhite, core);
+
         col *= uEmissiveStrength * (1.0 + vBoost * 2.5);
         gl_FragColor = vec4(col, 1.0);
       }
@@ -133,10 +151,12 @@ export default function FlowerField() {
     for (let i = 0; i < COUNT; i++) {
       seeds[i] = Math.random();
       // blue with subtle hue jitter (cyan ↔ royal blue), varied brightness
+      // Reference flowers are deep saturated royal-blue, not cyan.
+      // Hue centered around 0.63 (~ #2230ff range) with small jitter.
       baseColor.setHSL(
-        0.58 + (Math.random() - 0.5) * 0.06,
-        0.85,
-        0.45 + Math.random() * 0.2
+        0.625 + (Math.random() - 0.5) * 0.04,
+        0.95,
+        0.42 + Math.random() * 0.12
       );
       colors[i * 3] = baseColor.r;
       colors[i * 3 + 1] = baseColor.g;

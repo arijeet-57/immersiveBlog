@@ -11,9 +11,11 @@ export default function Environment() {
         <meshBasicMaterial color="#fff6d8" toneMapped={false} />
       </mesh>
       {/* Dark ground plane beneath the flower carpet */}
+      {/* Dark green-tinted foliage plane — the gaps between the flowers
+          should read as leafy ground, not pure black. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow={false}>
         <planeGeometry args={[400, 400]} />
-        <meshBasicMaterial color="#040814" toneMapped={false} />
+        <meshBasicMaterial color="#06180e" toneMapped={false} />
       </mesh>
     </>
   );
