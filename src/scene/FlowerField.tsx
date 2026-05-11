@@ -27,10 +27,14 @@ const STEM_SIDES = 6;
 // with a slight upward tip curl. Petal half-width at mid-length is ~0.22,
 // angular spacing 360/7 ≈ 51° → petals overlap by ~40° each side.
 const PETALS = 7;
+const PETAL_BASE_OFFSET = 0.085; // petals start at a small ring, not the axis
 const PETAL_LEN = 0.55;
-const PETAL_WIDTH = 0.46;
+const PETAL_WIDTH = 0.36;
 const PETAL_CUP = 0.14;
 const PETAL_PITCH = 0.16;
+const PETAL_Y_STAGGER = 0.018; // alternating up/down per petal
+const PETAL_PITCH_JITTER = 0.07;
+const PETAL_YAW_JITTER = 0.06;
 const PETAL_SEG_V = 8;
 const PETAL_SEG_U = 5;
 
@@ -73,40 +77,51 @@ function buildFlowerGeometry(): BufferGeometry {
     indices.push(b1, b2, t2, b1, t2, t1);
   }
 
-  // --- Petals: 6 individual 3D tessellated petals, cupped and pitched up ---
-  const cosP = Math.cos(PETAL_PITCH);
-  const sinP = Math.sin(PETAL_PITCH);
-
+  // --- Petals: 7 individual 3D petals radiating from a small inner ring.
+  // Each petal gets its own pitch + yaw jitter + Y stagger so the head
+  // reads as 3D-layered rather than a flat disk.
+  // Per-petal lateral coordinate emitted into uv (slot reused: petal verts
+  // use uv.y already for v; we encode lateral u via a derived varying in
+  // the shader using normal/position — instead pack vRegion+lateral.
+  // Simpler: write lateral-u into the THIRD UV channel? Three's ShaderMaterial
+  // exposes only one UV. Use a custom attribute `aLocalU`.
   for (let petalIdx = 0; petalIdx < PETALS; petalIdx++) {
-    const petalAngle = (petalIdx / PETALS) * Math.PI * 2;
+    const baseAngle = (petalIdx / PETALS) * Math.PI * 2;
+    const yawJitter =
+      (((petalIdx * 12.9898) % 1) - 0.5) * 2 * PETAL_YAW_JITTER;
+    const pitchJitter =
+      (((petalIdx * 7.9123) % 1) - 0.5) * 2 * PETAL_PITCH_JITTER;
+    const petalAngle = baseAngle + yawJitter;
     const cosA = Math.cos(petalAngle);
     const sinA = Math.sin(petalAngle);
+    const pitch = PETAL_PITCH + pitchJitter;
+    const cosP = Math.cos(pitch);
+    const sinP = Math.sin(pitch);
+    const yOffset = (petalIdx % 2 === 0 ? 1 : -1) * PETAL_Y_STAGGER;
     const baseIdx = positions.length / 3;
 
     for (let row = 0; row <= PETAL_SEG_V; row++) {
-      const v = row / PETAL_SEG_V; // 0 at base, 1 at tip
-      // Broad oval — width peaks at v=0.5. Reference petals are nearly
-      // circular silhouettes, not teardrops.
+      const v = row / PETAL_SEG_V; // 0 at base of petal, 1 at tip
       const w = PETAL_WIDTH * Math.pow(Math.sin(v * Math.PI), 0.75);
 
       for (let col = 0; col <= PETAL_SEG_U; col++) {
-        const u = col / PETAL_SEG_U; // 0..1 across width
+        const u = col / PETAL_SEG_U; // 0..1 across petal width
         const localX = (u - 0.5) * 2 * w;
-        const localY = v * PETAL_LEN;
-        // Cup: lifts the center axis of the petal upward
-        const cupFactor = (1.0 - Math.abs(2 * (u - 0.5))) * Math.sin(v * Math.PI);
+        // Y runs from PETAL_BASE_OFFSET (at petal base) outward to base+len.
+        const localY = PETAL_BASE_OFFSET + v * PETAL_LEN;
+        const cupFactor =
+          (1.0 - Math.abs(2 * (u - 0.5))) * Math.sin(v * Math.PI);
         const localZ = PETAL_CUP * cupFactor;
 
-        // Apply upward pitch around the lateral (X) axis: rotate (y,z).
         const pitchedY = cosP * localY + sinP * localZ;
         const verticalZ = -sinP * localY + cosP * localZ;
 
-        // Rotate around world Y so petal points outward at petalAngle.
         const wx = cosA * pitchedY - sinA * localX;
         const wz = sinA * pitchedY + cosA * localX;
-        const wy = STEM_HEIGHT + verticalZ;
+        const wy = STEM_HEIGHT + verticalZ + yOffset;
 
         positions.push(wx, wy, wz);
+        // uv.y carries petal-v; lateral u stored in `aLocalU` below.
         uvs.push(R_PETAL, v);
       }
     }
