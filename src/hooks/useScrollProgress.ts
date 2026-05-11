@@ -1,5 +1,9 @@
-export const scrollProgressRef = { current: 0 };
+import { useAppStore } from '../store/appStore';
 
 export function useScrollProgress() {
-  return scrollProgressRef;
+  return useAppStore((s) => s.scrollProgress);
+}
+
+export function getScrollProgress() {
+  return useAppStore.getState().scrollProgress;
 }
