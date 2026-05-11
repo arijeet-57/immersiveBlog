@@ -7,7 +7,7 @@ import {
   ShaderMaterial,
 } from 'three';
 
-const COUNT = 150;
+const COUNT = 400;
 
 export default function Fireflies() {
   const geometry = useMemo(() => {
@@ -34,7 +34,7 @@ export default function Fireflies() {
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
-          uSize: { value: 11 },
+          uSize: { value: 4.5 },
         },
         vertexShader: /* glsl */ `
           attribute vec3 aSeed;

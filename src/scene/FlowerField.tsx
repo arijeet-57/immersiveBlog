@@ -21,23 +21,27 @@ const RIPPLE_HALF_LIFE = 0.4;
 
 const STEM_HEIGHT = 0.6;
 const STEM_RADIUS = 0.028;
-const STEM_SIDES = 5;
+const STEM_SIDES = 6;
 
-const PETAL_COUNT = 6;
-const PETAL_PERIMETER = 36;
-const PETAL_INNER_R = 0.55;
-const PETAL_AMP = 0.45;
-const PETAL_SHARPNESS = 0.55;
-const PETAL_CUP = 0.16;
+const PETALS = 6;
+const PETAL_LEN = 0.62;
+const PETAL_WIDTH = 0.32;
+const PETAL_CUP = 0.10;
+const PETAL_PITCH = 0.35;
+const PETAL_SEG_V = 8; // along petal
+const PETAL_SEG_U = 5; // across petal
 
-const STAMEN_COUNT = 12;
-const STAMEN_RING_R = 0.14;
-const STAMEN_SIZE = 0.030;
+const STAMEN_COUNT = 14;
+const STAMEN_RING_R = 0.10;
+const STAMEN_BASE_R = 0.010;
+const STAMEN_TIP_R = 0.018;
+const STAMEN_HEIGHT = 0.07;
+const STAMEN_SIDES = 4;
 
-const PISTIL_R = 0.055;
-const PISTIL_SIDES = 6;
+const PISTIL_R = 0.045;
+const PISTIL_SIDES = 8;
 
-// Region tags written into UV.x so the fragment shader can branch.
+// Region tags written into UV.x.
 const R_STEM = 0.05;
 const R_PETAL = 0.40;
 const R_PISTIL = 0.70;
@@ -54,7 +58,7 @@ function buildFlowerGeometry(): BufferGeometry {
     for (let i = 0; i < STEM_SIDES; i++) {
       const a = (i / STEM_SIDES) * Math.PI * 2;
       positions.push(Math.cos(a) * STEM_RADIUS, y, Math.sin(a) * STEM_RADIUS);
-      uvs.push(R_STEM, 0.0);
+      uvs.push(R_STEM, ring);
     }
   }
   for (let i = 0; i < STEM_SIDES; i++) {
@@ -65,79 +69,130 @@ function buildFlowerGeometry(): BufferGeometry {
     indices.push(b1, b2, t2, b1, t2, t1);
   }
 
-  // --- Petal head (6 rounded lobes via |cos(3θ)|, slightly cupped) ---
-  const petalCenterY = STEM_HEIGHT + PETAL_CUP * 0.2;
-  const petalCenterIdx = positions.length / 3;
-  positions.push(0, petalCenterY, 0);
-  uvs.push(R_PETAL, 1.0);
+  // --- Petals: 6 individual 3D tessellated petals, cupped and pitched up ---
+  const cosP = Math.cos(PETAL_PITCH);
+  const sinP = Math.sin(PETAL_PITCH);
 
-  for (let i = 0; i < PETAL_PERIMETER; i++) {
-    const theta = (i / PETAL_PERIMETER) * Math.PI * 2;
-    const lobe = Math.pow(
-      Math.abs(Math.cos((PETAL_COUNT / 2) * theta)),
-      PETAL_SHARPNESS
-    );
-    const r = PETAL_INNER_R + PETAL_AMP * lobe;
-    const x = Math.cos(theta) * r;
-    const z = Math.sin(theta) * r;
-    const y = STEM_HEIGHT + PETAL_CUP * lobe; // tips curl upward
-    positions.push(x, y, z);
-    uvs.push(R_PETAL, 0.0);
-  }
-  for (let i = 0; i < PETAL_PERIMETER; i++) {
-    indices.push(
-      petalCenterIdx,
-      petalCenterIdx + i + 1,
-      petalCenterIdx + ((i + 1) % PETAL_PERIMETER) + 1
-    );
+  for (let petalIdx = 0; petalIdx < PETALS; petalIdx++) {
+    const petalAngle = (petalIdx / PETALS) * Math.PI * 2;
+    const cosA = Math.cos(petalAngle);
+    const sinA = Math.sin(petalAngle);
+    const baseIdx = positions.length / 3;
+
+    for (let row = 0; row <= PETAL_SEG_V; row++) {
+      const v = row / PETAL_SEG_V; // 0 at base, 1 at tip
+      // Teardrop width: peaks ~v=0.4, narrows toward both ends.
+      const w = PETAL_WIDTH * Math.sin(v * Math.PI) * (0.7 + 0.3 * (1 - v));
+
+      for (let col = 0; col <= PETAL_SEG_U; col++) {
+        const u = col / PETAL_SEG_U; // 0..1 across width
+        const localX = (u - 0.5) * 2 * w;
+        const localY = v * PETAL_LEN;
+        // Cup: lifts the center axis of the petal upward
+        const cupFactor = (1.0 - Math.abs(2 * (u - 0.5))) * Math.sin(v * Math.PI);
+        const localZ = PETAL_CUP * cupFactor;
+
+        // Apply upward pitch around the lateral (X) axis: rotate (y,z).
+        const pitchedY = cosP * localY + sinP * localZ;
+        const verticalZ = -sinP * localY + cosP * localZ;
+
+        // Rotate around world Y so petal points outward at petalAngle.
+        const wx = cosA * pitchedY - sinA * localX;
+        const wz = sinA * pitchedY + cosA * localX;
+        const wy = STEM_HEIGHT + verticalZ;
+
+        positions.push(wx, wy, wz);
+        uvs.push(R_PETAL, v);
+      }
+    }
+
+    const colsPerRow = PETAL_SEG_U + 1;
+    for (let row = 0; row < PETAL_SEG_V; row++) {
+      for (let col = 0; col < PETAL_SEG_U; col++) {
+        const a = baseIdx + row * colsPerRow + col;
+        const b = a + 1;
+        const c = a + colsPerRow;
+        const d = c + 1;
+        indices.push(a, b, d, a, d, c);
+      }
+    }
   }
 
-  // --- Pistil (small olive disc at very center, slightly above petals) ---
-  const pistilY = STEM_HEIGHT + PETAL_CUP * 0.4;
-  const pistilCenterIdx = positions.length / 3;
-  positions.push(0, pistilY, 0);
-  uvs.push(R_PISTIL, 1.0);
+  // --- Pistil: small olive dome (cone) at center ---
+  const pistilBaseY = STEM_HEIGHT + 0.02;
+  const pistilTipY = pistilBaseY + 0.03;
+  const pistilBaseIdx = positions.length / 3;
   for (let i = 0; i < PISTIL_SIDES; i++) {
     const a = (i / PISTIL_SIDES) * Math.PI * 2;
-    positions.push(Math.cos(a) * PISTIL_R, pistilY, Math.sin(a) * PISTIL_R);
-    uvs.push(R_PISTIL, 0.0);
+    positions.push(Math.cos(a) * PISTIL_R, pistilBaseY, Math.sin(a) * PISTIL_R);
+    uvs.push(R_PISTIL, 0);
   }
+  const pistilTipIdx = positions.length / 3;
+  positions.push(0, pistilTipY, 0);
+  uvs.push(R_PISTIL, 1);
   for (let i = 0; i < PISTIL_SIDES; i++) {
     indices.push(
-      pistilCenterIdx,
-      pistilCenterIdx + i + 1,
-      pistilCenterIdx + ((i + 1) % PISTIL_SIDES) + 1
+      pistilBaseIdx + i,
+      pistilBaseIdx + ((i + 1) % PISTIL_SIDES),
+      pistilTipIdx
     );
   }
 
-  // --- Stamens: 12 small white quads in a ring around the pistil ---
-  const stamenY = STEM_HEIGHT + PETAL_CUP * 0.45;
+  // --- Stamens: 14 small 3D rods with bulb tips, in a ring around the pistil ---
   for (let s = 0; s < STAMEN_COUNT; s++) {
     const a = (s / STAMEN_COUNT) * Math.PI * 2;
     const cx = Math.cos(a) * STAMEN_RING_R;
     const cz = Math.sin(a) * STAMEN_RING_R;
-    // tangent direction so the quad is oriented along the ring
-    const tx = -Math.sin(a);
-    const tz = Math.cos(a);
-    const hw = STAMEN_SIZE * 0.5;
-    const hl = STAMEN_SIZE * 0.7;
-    const base = positions.length / 3;
-    // 4 corners (flat quad, slight upward bias on outer edge for "tip")
-    positions.push(cx - tx * hw - Math.cos(a) * hl * 0.3, stamenY, cz - tz * hw - Math.sin(a) * hl * 0.3);
-    uvs.push(R_STAMEN, 0.0);
-    positions.push(cx + tx * hw - Math.cos(a) * hl * 0.3, stamenY, cz + tz * hw - Math.sin(a) * hl * 0.3);
-    uvs.push(R_STAMEN, 0.0);
-    positions.push(cx + tx * hw + Math.cos(a) * hl * 0.7, stamenY + 0.01, cz + tz * hw + Math.sin(a) * hl * 0.7);
+    const stamenBaseY = STEM_HEIGHT + 0.015;
+    const stamenTipY = stamenBaseY + STAMEN_HEIGHT;
+    const baseIdx = positions.length / 3;
+
+    // base ring
+    for (let i = 0; i < STAMEN_SIDES; i++) {
+      const sa = (i / STAMEN_SIDES) * Math.PI * 2;
+      positions.push(
+        cx + Math.cos(sa) * STAMEN_BASE_R,
+        stamenBaseY,
+        cz + Math.sin(sa) * STAMEN_BASE_R
+      );
+      uvs.push(R_STAMEN, 0);
+    }
+    // tip ring (slightly bulbous)
+    for (let i = 0; i < STAMEN_SIDES; i++) {
+      const sa = (i / STAMEN_SIDES) * Math.PI * 2;
+      positions.push(
+        cx + Math.cos(sa) * STAMEN_TIP_R,
+        stamenTipY,
+        cz + Math.sin(sa) * STAMEN_TIP_R
+      );
+      uvs.push(R_STAMEN, 0.8);
+    }
+    // cap center
+    const capIdx = positions.length / 3;
+    positions.push(cx, stamenTipY + 0.006, cz);
     uvs.push(R_STAMEN, 1.0);
-    positions.push(cx - tx * hw + Math.cos(a) * hl * 0.7, stamenY + 0.01, cz - tz * hw + Math.sin(a) * hl * 0.7);
-    uvs.push(R_STAMEN, 1.0);
-    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+
+    // side quads
+    for (let i = 0; i < STAMEN_SIDES; i++) {
+      const b1 = baseIdx + i;
+      const b2 = baseIdx + ((i + 1) % STAMEN_SIDES);
+      const t1 = baseIdx + STAMEN_SIDES + i;
+      const t2 = baseIdx + STAMEN_SIDES + ((i + 1) % STAMEN_SIDES);
+      indices.push(b1, b2, t2, b1, t2, t1);
+    }
+    // cap triangles
+    for (let i = 0; i < STAMEN_SIDES; i++) {
+      const t1 = baseIdx + STAMEN_SIDES + i;
+      const t2 = baseIdx + STAMEN_SIDES + ((i + 1) % STAMEN_SIDES);
+      indices.push(t2, t1, capIdx);
+    }
   }
 
   const g = new BufferGeometry();
   g.setIndex(indices);
   g.setAttribute('position', new Float32BufferAttribute(positions, 3));
   g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  g.computeVertexNormals();
   g.computeBoundingSphere();
   return g;
 }
@@ -157,21 +212,20 @@ function buildFlowerMaterial(): ShaderMaterial {
       varying vec3 vColor;
       varying float vRegion;
       varying float vU;
-      varying float vRadial;
+      varying vec3 vNormal;
 
       void main() {
         vBoost = aBoost;
         vColor = aColor;
         vRegion = uv.x;
         vU = uv.y;
-        float horiz = length(position.xz);
-        vRadial = 1.0 - smoothstep(0.05, 0.55, horiz);
+        vNormal = normalize(normalMatrix * normal);
 
         vec3 p = position;
-        float headMask = smoothstep(0.2, 0.6, position.y);
+        // gentle sway — only head moves
+        float headMask = smoothstep(0.25, 0.55, position.y);
         p.x += sin(uTime * 0.9 + aSeed * 6.2831) * 0.010 * headMask;
         p.z += cos(uTime * 0.7 + aSeed * 6.2831) * 0.010 * headMask;
-
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
       }
     `,
@@ -180,30 +234,34 @@ function buildFlowerMaterial(): ShaderMaterial {
       varying vec3 vColor;
       varying float vRegion;
       varying float vU;
-      varying float vRadial;
+      varying vec3 vNormal;
       uniform float uEmissiveStrength;
 
       void main() {
         vec3 col;
         if (vRegion < 0.20) {
-          // STEM — dark non-emissive green.
           col = vec3(0.022, 0.045, 0.028);
         } else if (vRegion < 0.55) {
-          // PETAL — saturated royal blue, slight inner cyan glow toward
-          // the cup. Outer petal edges darker (vRadial -> 0).
-          vec3 petal = vColor * mix(0.32, 0.55, vRadial);
-          // a soft cyan rim where petals meet the center cluster
-          vec3 cyan = vec3(0.20, 0.42, 0.75);
-          col = mix(petal, cyan, smoothstep(0.55, 0.95, vRadial) * 0.35);
+          // Petal: base→tip gradient — darker saturated at base, brighter
+          // and slightly cyaner toward the tip. Subtle rim from normal.
+          vec3 petalBase = vColor * 0.30;
+          vec3 petalTip  = vColor * 0.62 + vec3(0.06, 0.10, 0.14);
+          col = mix(petalBase, petalTip, vU);
+          // soft cyan inner glow near the base (cup interior)
+          float innerCup = (1.0 - vU) * 0.4;
+          col = mix(col, vec3(0.18, 0.36, 0.62), innerCup * 0.45);
+          // Lambert-ish facing factor — petals facing up get slight lift.
+          float face = clamp(vNormal.y, 0.0, 1.0);
+          col *= mix(0.85, 1.15, face);
           col *= uEmissiveStrength * (1.0 + vBoost * 1.6);
         } else if (vRegion < 0.85) {
-          // PISTIL — olive/khaki with slight greenish-yellow tint.
-          col = mix(vec3(0.05, 0.06, 0.025), vec3(0.18, 0.18, 0.06), vRadial);
+          // Pistil — olive dome, slightly brighter at tip.
+          col = mix(vec3(0.05, 0.06, 0.025), vec3(0.20, 0.20, 0.06), vU);
         } else {
-          // STAMEN — cream-white tip (vU=1) fading to pale yellow at base.
-          vec3 base = vec3(0.55, 0.50, 0.35);
-          vec3 tip  = vec3(1.15, 1.10, 0.95);
-          col = mix(base, tip, vU);
+          // Stamen — pale filament at base, bright cream bulb at tip.
+          vec3 base = vec3(0.50, 0.46, 0.32);
+          vec3 tip  = vec3(1.10, 1.05, 0.85);
+          col = mix(base, tip, smoothstep(0.6, 1.0, vU));
         }
         gl_FragColor = vec4(col, 1.0);
       }
@@ -243,7 +301,7 @@ export default function FlowerField() {
       const roll = (Math.random() - 0.5) * 0.35;
       e.set(pitch, yaw, roll, 'YXZ');
       q.setFromEuler(e);
-      const s = 0.7 + Math.random() * 0.5;
+      const s = 0.75 + Math.random() * 0.55;
       scale.set(s, s, s);
       m.compose(pos, q, scale);
       mesh.setMatrixAt(i, m);
