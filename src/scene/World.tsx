@@ -4,6 +4,7 @@ import PostFX from './PostFX';
 import CameraRig from './CameraRig';
 import Environment from './Environment';
 import FlowerField from './FlowerField';
+import Foliage from './Foliage';
 import Fireflies from './Fireflies';
 
 export default function World() {
@@ -19,6 +20,7 @@ export default function World() {
       <Suspense fallback={null}>
         <CameraRig />
         <Environment />
+        <Foliage />
         <FlowerField />
         <Fireflies />
         <PostFX />

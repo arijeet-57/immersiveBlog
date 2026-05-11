@@ -14,68 +14,124 @@ import {
   Vector3,
 } from 'three';
 
-const COUNT = 10_000;
-const FIELD_SIZE = 36;
+const COUNT = 3000;
+const FIELD_SIZE = 40;
 const RIPPLE_RADIUS = 2.4;
 const RIPPLE_HALF_LIFE = 0.4;
 
-const STEM_HEIGHT = 0.65;
-const STEM_RADIUS = 0.025;
-const HEAD_PERIMETER = 30;
-const HEAD_INNER_R = 0.30;
-const HEAD_AMPLITUDE = 0.78;
-const HEAD_SHARPNESS = 0.55;
-const HEAD_CUP = 0.18; // petal tips curl up — makes the head 3D, not flat
-const STEM_SIDES = 6;
+const STEM_HEIGHT = 0.6;
+const STEM_RADIUS = 0.028;
+const STEM_SIDES = 5;
 
-// Single merged geometry: dark-green stem (cylinder, no caps) + cupped
-// 5-petal head at the top. Per-vertex `position.y` is later used in the
-// fragment shader to branch stem (low y) vs head (high y).
+const PETAL_COUNT = 6;
+const PETAL_PERIMETER = 36;
+const PETAL_INNER_R = 0.55;
+const PETAL_AMP = 0.45;
+const PETAL_SHARPNESS = 0.55;
+const PETAL_CUP = 0.16;
+
+const STAMEN_COUNT = 12;
+const STAMEN_RING_R = 0.14;
+const STAMEN_SIZE = 0.030;
+
+const PISTIL_R = 0.055;
+const PISTIL_SIDES = 6;
+
+// Region tags written into UV.x so the fragment shader can branch.
+const R_STEM = 0.05;
+const R_PETAL = 0.40;
+const R_PISTIL = 0.70;
+const R_STAMEN = 1.00;
+
 function buildFlowerGeometry(): BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
 
-  // Stem: two rings (bottom y=0, top y=STEM_HEIGHT)
+  // --- Stem ---
   for (let ring = 0; ring < 2; ring++) {
     const y = ring === 0 ? 0 : STEM_HEIGHT;
     for (let i = 0; i < STEM_SIDES; i++) {
       const a = (i / STEM_SIDES) * Math.PI * 2;
       positions.push(Math.cos(a) * STEM_RADIUS, y, Math.sin(a) * STEM_RADIUS);
-      uvs.push(0.5, 0.0); // unused for stem path
+      uvs.push(R_STEM, 0.0);
     }
   }
   for (let i = 0; i < STEM_SIDES; i++) {
-    const bot1 = i;
-    const bot2 = (i + 1) % STEM_SIDES;
-    const top1 = STEM_SIDES + i;
-    const top2 = STEM_SIDES + ((i + 1) % STEM_SIDES);
-    indices.push(bot1, bot2, top2);
-    indices.push(bot1, top2, top1);
+    const b1 = i;
+    const b2 = (i + 1) % STEM_SIDES;
+    const t1 = STEM_SIDES + i;
+    const t2 = STEM_SIDES + ((i + 1) % STEM_SIDES);
+    indices.push(b1, b2, t2, b1, t2, t1);
   }
 
-  // Head: center vertex (UV.y=1) + perimeter vertices (UV.y=0), cupped
-  const headCenter = positions.length / 3;
-  positions.push(0, STEM_HEIGHT + HEAD_CUP * 0.25, 0);
-  uvs.push(0.5, 1.0);
+  // --- Petal head (6 rounded lobes via |cos(3θ)|, slightly cupped) ---
+  const petalCenterY = STEM_HEIGHT + PETAL_CUP * 0.2;
+  const petalCenterIdx = positions.length / 3;
+  positions.push(0, petalCenterY, 0);
+  uvs.push(R_PETAL, 1.0);
 
-  for (let i = 0; i < HEAD_PERIMETER; i++) {
-    const theta = (i / HEAD_PERIMETER) * Math.PI * 2;
-    const lobe = Math.pow(Math.abs(Math.cos(2.5 * theta)), HEAD_SHARPNESS);
-    const r = HEAD_INNER_R + HEAD_AMPLITUDE * lobe;
+  for (let i = 0; i < PETAL_PERIMETER; i++) {
+    const theta = (i / PETAL_PERIMETER) * Math.PI * 2;
+    const lobe = Math.pow(
+      Math.abs(Math.cos((PETAL_COUNT / 2) * theta)),
+      PETAL_SHARPNESS
+    );
+    const r = PETAL_INNER_R + PETAL_AMP * lobe;
     const x = Math.cos(theta) * r;
     const z = Math.sin(theta) * r;
-    const y = STEM_HEIGHT + HEAD_CUP * lobe; // tips curl upward
+    const y = STEM_HEIGHT + PETAL_CUP * lobe; // tips curl upward
     positions.push(x, y, z);
-    uvs.push(0.5, 0.0);
+    uvs.push(R_PETAL, 0.0);
+  }
+  for (let i = 0; i < PETAL_PERIMETER; i++) {
+    indices.push(
+      petalCenterIdx,
+      petalCenterIdx + i + 1,
+      petalCenterIdx + ((i + 1) % PETAL_PERIMETER) + 1
+    );
   }
 
-  for (let i = 0; i < HEAD_PERIMETER; i++) {
+  // --- Pistil (small olive disc at very center, slightly above petals) ---
+  const pistilY = STEM_HEIGHT + PETAL_CUP * 0.4;
+  const pistilCenterIdx = positions.length / 3;
+  positions.push(0, pistilY, 0);
+  uvs.push(R_PISTIL, 1.0);
+  for (let i = 0; i < PISTIL_SIDES; i++) {
+    const a = (i / PISTIL_SIDES) * Math.PI * 2;
+    positions.push(Math.cos(a) * PISTIL_R, pistilY, Math.sin(a) * PISTIL_R);
+    uvs.push(R_PISTIL, 0.0);
+  }
+  for (let i = 0; i < PISTIL_SIDES; i++) {
     indices.push(
-      headCenter,
-      headCenter + i + 1,
-      headCenter + ((i + 1) % HEAD_PERIMETER) + 1
+      pistilCenterIdx,
+      pistilCenterIdx + i + 1,
+      pistilCenterIdx + ((i + 1) % PISTIL_SIDES) + 1
     );
+  }
+
+  // --- Stamens: 12 small white quads in a ring around the pistil ---
+  const stamenY = STEM_HEIGHT + PETAL_CUP * 0.45;
+  for (let s = 0; s < STAMEN_COUNT; s++) {
+    const a = (s / STAMEN_COUNT) * Math.PI * 2;
+    const cx = Math.cos(a) * STAMEN_RING_R;
+    const cz = Math.sin(a) * STAMEN_RING_R;
+    // tangent direction so the quad is oriented along the ring
+    const tx = -Math.sin(a);
+    const tz = Math.cos(a);
+    const hw = STAMEN_SIZE * 0.5;
+    const hl = STAMEN_SIZE * 0.7;
+    const base = positions.length / 3;
+    // 4 corners (flat quad, slight upward bias on outer edge for "tip")
+    positions.push(cx - tx * hw - Math.cos(a) * hl * 0.3, stamenY, cz - tz * hw - Math.sin(a) * hl * 0.3);
+    uvs.push(R_STAMEN, 0.0);
+    positions.push(cx + tx * hw - Math.cos(a) * hl * 0.3, stamenY, cz + tz * hw - Math.sin(a) * hl * 0.3);
+    uvs.push(R_STAMEN, 0.0);
+    positions.push(cx + tx * hw + Math.cos(a) * hl * 0.7, stamenY + 0.01, cz + tz * hw + Math.sin(a) * hl * 0.7);
+    uvs.push(R_STAMEN, 1.0);
+    positions.push(cx - tx * hw + Math.cos(a) * hl * 0.7, stamenY + 0.01, cz - tz * hw + Math.sin(a) * hl * 0.7);
+    uvs.push(R_STAMEN, 1.0);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   const g = new BufferGeometry();
@@ -90,8 +146,7 @@ function buildFlowerMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uEmissiveStrength: { value: 0.55 },
-      uStemThreshold: { value: STEM_HEIGHT * 0.85 },
+      uEmissiveStrength: { value: 0.6 },
     },
     vertexShader: /* glsl */ `
       attribute float aBoost;
@@ -100,24 +155,22 @@ function buildFlowerMaterial(): ShaderMaterial {
       uniform float uTime;
       varying float vBoost;
       varying vec3 vColor;
-      varying float vY;
+      varying float vRegion;
+      varying float vU;
       varying float vRadial;
 
       void main() {
         vBoost = aBoost;
         vColor = aColor;
-        vY = position.y;
-        // vRadial: 1 at center axis, 0 at petal edge. Only meaningful
-        // for the head (vY > stem threshold); the fragment branches.
+        vRegion = uv.x;
+        vU = uv.y;
         float horiz = length(position.xz);
         vRadial = 1.0 - smoothstep(0.05, 0.55, horiz);
 
         vec3 p = position;
-        // gentle sway — only the head sways, not the stem
         float headMask = smoothstep(0.2, 0.6, position.y);
-        float sway = sin(uTime * 0.9 + aSeed * 6.2831) * 0.012;
-        p.x += sway * headMask;
-        p.z += cos(uTime * 0.7 + aSeed * 6.2831) * 0.012 * headMask;
+        p.x += sin(uTime * 0.9 + aSeed * 6.2831) * 0.010 * headMask;
+        p.z += cos(uTime * 0.7 + aSeed * 6.2831) * 0.010 * headMask;
 
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
       }
@@ -125,31 +178,32 @@ function buildFlowerMaterial(): ShaderMaterial {
     fragmentShader: /* glsl */ `
       varying float vBoost;
       varying vec3 vColor;
-      varying float vY;
+      varying float vRegion;
+      varying float vU;
       varying float vRadial;
       uniform float uEmissiveStrength;
-      uniform float uStemThreshold;
 
       void main() {
         vec3 col;
-        if (vY < uStemThreshold) {
-          // Stem: dark foliage green, NOT emissive — should not bloom.
+        if (vRegion < 0.20) {
+          // STEM — dark non-emissive green.
           col = vec3(0.022, 0.045, 0.028);
+        } else if (vRegion < 0.55) {
+          // PETAL — saturated royal blue, slight inner cyan glow toward
+          // the cup. Outer petal edges darker (vRadial -> 0).
+          vec3 petal = vColor * mix(0.32, 0.55, vRadial);
+          // a soft cyan rim where petals meet the center cluster
+          vec3 cyan = vec3(0.20, 0.42, 0.75);
+          col = mix(petal, cyan, smoothstep(0.55, 0.95, vRadial) * 0.35);
+          col *= uEmissiveStrength * (1.0 + vBoost * 1.6);
+        } else if (vRegion < 0.85) {
+          // PISTIL — olive/khaki with slight greenish-yellow tint.
+          col = mix(vec3(0.05, 0.06, 0.025), vec3(0.18, 0.18, 0.06), vRadial);
         } else {
-          // Petal: deep saturated royal blue, dim by default.
-          vec3 petal = vColor * 0.42;
-          // Cyan halo around the bright core.
-          float halo = smoothstep(0.55, 0.92, vRadial);
-          vec3 cyan = vec3(0.30, 0.55, 0.80);
-          // Hot white core — just bright enough that bloom catches it
-          // as a small luminous point per flower, not the whole petal.
-          float core = smoothstep(0.88, 1.0, vRadial);
-          vec3 hotWhite = vec3(1.30, 1.45, 1.65);
-
-          col = petal;
-          col = mix(col, cyan, halo * 0.55);
-          col = mix(col, hotWhite, core);
-          col *= uEmissiveStrength * (1.0 + vBoost * 1.8);
+          // STAMEN — cream-white tip (vU=1) fading to pale yellow at base.
+          vec3 base = vec3(0.55, 0.50, 0.35);
+          vec3 tip  = vec3(1.15, 1.10, 0.95);
+          col = mix(base, tip, vU);
         }
         gl_FragColor = vec4(col, 1.0);
       }
@@ -171,7 +225,6 @@ export default function FlowerField() {
   useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
-
     const m = new Matrix4();
     const pos = new Vector3();
     const q = new Quaternion();
@@ -182,17 +235,15 @@ export default function FlowerField() {
     for (let i = 0; i < COUNT; i++) {
       const x = (Math.random() - 0.5) * FIELD_SIZE;
       const z = (Math.random() - 0.5) * FIELD_SIZE;
-      const yJit = (Math.random() - 0.5) * 0.04;
-      pos.set(x, yJit, z);
+      pos.set(x, (Math.random() - 0.5) * 0.04, z);
       positions[i * 2] = x;
       positions[i * 2 + 1] = z;
-      // Slight tilt off vertical so the carpet doesn't look like a sheet.
       const pitch = (Math.random() - 0.5) * 0.35;
       const yaw = Math.random() * Math.PI * 2;
       const roll = (Math.random() - 0.5) * 0.35;
       e.set(pitch, yaw, roll, 'YXZ');
       q.setFromEuler(e);
-      const s = 0.55 + Math.random() * 0.35;
+      const s = 0.7 + Math.random() * 0.5;
       scale.set(s, s, s);
       m.compose(pos, q, scale);
       mesh.setMatrixAt(i, m);
@@ -205,26 +256,21 @@ export default function FlowerField() {
     for (let i = 0; i < COUNT; i++) {
       seeds[i] = Math.random();
       baseColor.setHSL(
-        0.625 + (Math.random() - 0.5) * 0.04,
-        0.92,
-        0.42 + Math.random() * 0.10
+        0.625 + (Math.random() - 0.5) * 0.035,
+        0.95,
+        0.42 + Math.random() * 0.08
       );
       colors[i * 3] = baseColor.r;
       colors[i * 3 + 1] = baseColor.g;
       colors[i * 3 + 2] = baseColor.b;
     }
-
     geometry.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 1));
     geometry.setAttribute('aColor', new InstancedBufferAttribute(colors, 3));
-    geometry.setAttribute(
-      'aBoost',
-      new InstancedBufferAttribute(boostsRef.current, 1)
-    );
+    geometry.setAttribute('aBoost', new InstancedBufferAttribute(boostsRef.current, 1));
   }, [geometry]);
 
   useFrame((state, dt) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;
-
     const boosts = boostsRef.current;
     const positions = positionsRef.current;
     const decay = Math.pow(0.5, dt / RIPPLE_HALF_LIFE);
@@ -241,14 +287,12 @@ export default function FlowerField() {
         const d2 = dx * dx + dz * dz;
         if (d2 < r2) {
           const k = 1 - d2 / r2;
-          const target = 0.55 * k;
+          const target = 0.5 * k;
           if (boosts[i] < target) boosts[i] = target;
         }
       }
     }
-
-    const attr = geometry.getAttribute('aBoost') as InstancedBufferAttribute;
-    attr.needsUpdate = true;
+    (geometry.getAttribute('aBoost') as InstancedBufferAttribute).needsUpdate = true;
   });
 
   return (
