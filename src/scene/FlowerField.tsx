@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import {
   BufferGeometry,
   Color,
+  DoubleSide,
   Euler,
   Float32BufferAttribute,
   InstancedBufferAttribute,
@@ -52,7 +53,7 @@ function buildFlowerMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uEmissiveStrength: { value: 1.2 },
+      uEmissiveStrength: { value: 2.4 },
     },
     vertexShader: /* glsl */ `
       attribute float aBoost;
@@ -86,6 +87,7 @@ function buildFlowerMaterial(): ShaderMaterial {
         gl_FragColor = vec4(col, 1.0);
       }
     `,
+    side: DoubleSide,
     toneMapped: false,
   });
 }
@@ -118,7 +120,7 @@ export default function FlowerField() {
       positions[i * 2 + 1] = z;
       e.set(0, Math.random() * Math.PI * 2, 0);
       q.setFromEuler(e);
-      const s = 0.18 + Math.random() * 0.18;
+      const s = 0.35 + Math.random() * 0.25;
       scale.set(s, s, s);
       m.compose(pos, q, scale);
       mesh.setMatrixAt(i, m);

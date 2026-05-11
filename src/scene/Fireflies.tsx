@@ -15,9 +15,11 @@ export default function Fireflies() {
     const positions = new Float32Array(COUNT * 3);
     const seeds = new Float32Array(COUNT * 3);
     for (let i = 0; i < COUNT; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 50;
-      positions[i * 3 + 1] = 0.4 + Math.random() * 5;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 50;
+      // Fill a much larger volume so they read at both Frame A (top-down)
+      // and Frame B (eye-level) without obvious bounding-box edges.
+      positions[i * 3] = (Math.random() - 0.5) * 140;
+      positions[i * 3 + 1] = 0.4 + Math.random() * 20;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 140;
       seeds[i * 3] = Math.random();
       seeds[i * 3 + 1] = Math.random();
       seeds[i * 3 + 2] = Math.random();
