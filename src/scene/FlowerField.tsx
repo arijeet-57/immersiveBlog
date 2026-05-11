@@ -14,7 +14,7 @@ import {
   Vector3,
 } from 'three';
 
-const COUNT = 3000;
+const COUNT = 870;
 const FIELD_SIZE = 40;
 const RIPPLE_RADIUS = 2.4;
 const RIPPLE_HALF_LIFE = 0.4;

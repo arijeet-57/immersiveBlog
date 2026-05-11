@@ -12,7 +12,7 @@ export default function World() {
     <Canvas
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 2]}
-      camera={{ position: [0, 80, 0], fov: 45, near: 0.1, far: 1000 }}
+      camera={{ position: [0, 15, 0], fov: 45, near: 0.05, far: 1000 }}
       style={{ position: 'fixed', inset: 0, background: '#000' }}
     >
       <color attach="background" args={['#000000']} />

@@ -1,19 +1,27 @@
 import { CatmullRomCurve3, Vector3 } from 'three';
 
+// Scroll-driven journey:
+//   0.00 → overhead, close enough that the flower carpet fills the view
+//          (no field edges visible)
+//   0.25 → arcing down forward
+//   0.50 → ground POV; camera below flower-head height looking up at
+//          stems and the undersides of petals
+//   0.75 → rising up and forward toward the valley
+//   1.00 → Frame C valley vista
 const positionWaypoints: Array<[number, [number, number, number]]> = [
-  [0.0, [0, 80, 0]],
-  [0.35, [0, 25, 20]],
-  [0.5, [0, 1.6, 6]],
-  [0.65, [0, 12, -10]],
-  [1.0, [0, 30, -120]],
+  [0.0,  [0, 15,  0]],
+  [0.25, [0,  6,  5]],
+  [0.5,  [0,  0.3, 0]],
+  [0.75, [0,  8, -15]],
+  [1.0,  [0, 30, -120]],
 ];
 
 const lookAtWaypoints: Array<[number, [number, number, number]]> = [
-  [0.0, [0, 0, 0]],
-  [0.35, [0, 1, 0]],
-  [0.5, [0, 1.2, 0]],
-  [0.65, [0, 2, -30]],
-  [1.0, [0, 5, -300]],
+  [0.0,  [0, 0,    0]],
+  [0.25, [0, 1,    0]],
+  [0.5,  [0, 1.6, -3]],
+  [0.75, [0, 4,  -60]],
+  [1.0,  [0, 5, -300]],
 ];
 
 export const positionCurve = new CatmullRomCurve3(
