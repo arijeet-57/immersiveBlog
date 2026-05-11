@@ -15,9 +15,9 @@ import {
 } from 'three';
 
 const FIELD_SIZE = 40;
-const GRASS_COUNT = 4500;
-const LEAF_COUNT = 2000;
-const TWIG_COUNT = 220;
+const GRASS_COUNT = 6000;
+const LEAF_COUNT = 3000;
+const TWIG_COUNT = 1220;
 
 // --- Grass blade: curved 3D ribbon, slightly tapered, with a tip curl ---
 function buildBladeGeometry(): BufferGeometry {
@@ -251,7 +251,6 @@ function Leaves() {
 function Twigs() {
   const ref = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => buildTwigGeometry(), []);
-  // Brown-ish: dark warm tone, no sway.
   const material = useMemo(
     () => buildFoliageMaterial(new Color(0.08, 0.06, 0.04), 1.15, 0.0),
     []

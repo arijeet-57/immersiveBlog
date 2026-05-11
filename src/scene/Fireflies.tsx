@@ -7,19 +7,23 @@ import {
   ShaderMaterial,
 } from 'three';
 
-const COUNT = 400;
+const COUNT = 170;
 
 export default function Fireflies() {
   const geometry = useMemo(() => {
     const g = new BufferGeometry();
     const positions = new Float32Array(COUNT * 3);
     const seeds = new Float32Array(COUNT * 3);
+    // Hover band: flower heads sit around y≈0.7 (stem 0.6 + head ~0.15).
+    // Keep fireflies in a shallow layer just above them so they read as
+    // hovering over the carpet, not floating freely in the sky.
+    const FLY_Y_MIN = 0.85;
+    const FLY_Y_MAX = 1.8;
+    const FLY_SPREAD = 50; // slightly wider than the 40-unit flower field
     for (let i = 0; i < COUNT; i++) {
-      // Fill a much larger volume so they read at both Frame A (top-down)
-      // and Frame B (eye-level) without obvious bounding-box edges.
-      positions[i * 3] = (Math.random() - 0.5) * 140;
-      positions[i * 3 + 1] = 0.4 + Math.random() * 20;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 140;
+      positions[i * 3] = (Math.random() - 0.5) * FLY_SPREAD;
+      positions[i * 3 + 1] = FLY_Y_MIN + Math.random() * (FLY_Y_MAX - FLY_Y_MIN);
+      positions[i * 3 + 2] = (Math.random() - 0.5) * FLY_SPREAD;
       seeds[i * 3] = Math.random();
       seeds[i * 3 + 1] = Math.random();
       seeds[i * 3 + 2] = Math.random();
@@ -44,9 +48,9 @@ export default function Fireflies() {
 
           void main() {
             vec3 p = position;
-            p.x += sin(uTime * 0.5 + aSeed.x * 6.2831) * 0.7;
-            p.y += sin(uTime * 0.4 + aSeed.y * 6.2831) * 0.35;
-            p.z += cos(uTime * 0.6 + aSeed.z * 6.2831) * 0.7;
+            p.x += sin(uTime * 0.5 + aSeed.x * 6.2831) * 0.45;
+            p.y += sin(uTime * 0.4 + aSeed.y * 6.2831) * 0.18;
+            p.z += cos(uTime * 0.6 + aSeed.z * 6.2831) * 0.45;
             vec4 mv = modelViewMatrix * vec4(p, 1.0);
             gl_Position = projectionMatrix * mv;
             gl_PointSize = uSize * (180.0 / -mv.z);

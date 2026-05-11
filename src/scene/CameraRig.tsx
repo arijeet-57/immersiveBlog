@@ -2,7 +2,6 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useRef } from 'react';
 import { Vector3 } from 'three';
 import { useAppStore } from '../store/appStore';
-import { getRouteWaypoint } from '../routes/waypoints';
 import {
   positionCurve,
   lookAtCurve,
@@ -20,18 +19,11 @@ export default function CameraRig() {
   const firstFrame = useRef(true);
 
   useFrame((_, dt) => {
-    const { activeRoute, scrollProgress } = useAppStore.getState();
-    const waypoint = getRouteWaypoint(activeRoute);
-
-    if (waypoint === null) {
-      const eased = easePower2InOut(scrollProgress);
-      const t = scrollToCurveT(eased);
-      positionCurve.getPoint(t, tmpPos);
-      lookAtCurve.getPoint(t, tmpLook);
-    } else {
-      tmpPos.fromArray(waypoint.position);
-      tmpLook.fromArray(waypoint.lookAt);
-    }
+    const scrollProgress = useAppStore.getState().scrollProgress;
+    const eased = easePower2InOut(scrollProgress);
+    const t = scrollToCurveT(eased);
+    positionCurve.getPoint(t, tmpPos);
+    lookAtCurve.getPoint(t, tmpLook);
 
     if (firstFrame.current) {
       camera.position.copy(tmpPos);

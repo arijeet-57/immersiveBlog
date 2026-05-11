@@ -14,67 +14,95 @@ import {
   Vector3,
 } from 'three';
 
-const COUNT = 870;
+const COUNT = 2000;
 const FIELD_SIZE = 40;
 const RIPPLE_RADIUS = 2.4;
 const RIPPLE_HALF_LIFE = 0.4;
 
 const STEM_HEIGHT = 0.6;
 const STEM_RADIUS = 0.028;
-const STEM_SIDES = 6;
+const STEM_SIDES = 12;
+const STEM_RINGS = 8; // taper + bend along the length
 
 // Reference: hepatica-style — 7 broad overlapping petals, nearly horizontal
 // with a slight upward tip curl. Petal half-width at mid-length is ~0.22,
 // angular spacing 360/7 ≈ 51° → petals overlap by ~40° each side.
-const PETALS = 7;
-const PETAL_BASE_OFFSET = 0.085; // petals start at a small ring, not the axis
-const PETAL_LEN = 0.55;
-const PETAL_WIDTH = 0.36;
-const PETAL_CUP = 0.14;
-const PETAL_PITCH = 0.16;
-const PETAL_Y_STAGGER = 0.018; // alternating up/down per petal
-const PETAL_PITCH_JITTER = 0.07;
-const PETAL_YAW_JITTER = 0.06;
-const PETAL_SEG_V = 8;
-const PETAL_SEG_U = 5;
+// Hepatica nobilis reference: 6–7 broad rounded-oval petals, nearly flat,
+// pure deep cobalt blue. No yellow disc — the center is a tight tuft of
+// fine white stamens.
+// 6 distinct lobed petals with visible gaps. Width profile tapers at
+// both ends so each petal reads as a rounded oval, not a pie slice.
+const PETALS = 6;
+const PETAL_BASE_OFFSET = 0.05;
+const PETAL_LEN = 0.57;
+const PETAL_WIDTH = 0.18;
+const PETAL_CUP = 0.06;
+// Negative pitch = petal tip rises above base → concave cup facing the sky.
+const PETAL_PITCH = -0.28;
+const PETAL_Y_STAGGER = 0.012;
+const PETAL_PITCH_JITTER = 0.05;
+const PETAL_YAW_JITTER = 0.04;
+const PETAL_SEG_V = 16;
+const PETAL_SEG_U = 9;
 
-// ~22 thin tall filaments — should read as a fine bristly cluster, not rods.
-const STAMEN_COUNT = 22;
-const STAMEN_RING_R = 0.085;
-const STAMEN_BASE_R = 0.005;
-const STAMEN_TIP_R = 0.0075;
-const STAMEN_HEIGHT = 0.105;
+// Dense tuft of fine white filaments — kept small so they read as
+// pollen specks, not rods.
+const STAMEN_COUNT = 26;
+const STAMEN_RING_R = 0.048;
+const STAMEN_BASE_R = 0.0022;
+const STAMEN_TIP_R = 0.0034;
+const STAMEN_HEIGHT = 0.058;
 const STAMEN_SIDES = 4;
-
-const PISTIL_R = 0.045;
-const PISTIL_SIDES = 8;
 
 // Region tags written into UV.x.
 const R_STEM = 0.05;
 const R_PETAL = 0.40;
-const R_PISTIL = 0.70;
+const R_CENTER = 0.70;
 const R_STAMEN = 1.00;
+
+// Yellow center sphere — sits beneath/inside the stamen tuft.
+const CENTER_R = 0.038;
+const CENTER_SEGMENTS = 10;
+const CENTER_RINGS = 8;
 
 function buildFlowerGeometry(): BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
+  const localUs: number[] = []; // lateral 0..1 across petal; 0.5 for non-petal
   const indices: number[] = [];
 
-  // --- Stem ---
-  for (let ring = 0; ring < 2; ring++) {
-    const y = ring === 0 ? 0 : STEM_HEIGHT;
+  // --- Stem: multi-ring cylinder with subtle taper + lateral bend so the
+  // silhouette reads as a living stem rather than a chamfered tube. ---
+  for (let ring = 0; ring <= STEM_RINGS; ring++) {
+    const v = ring / STEM_RINGS;
+    const y = v * STEM_HEIGHT;
+    // Tapers slightly thinner near the top (just below the head).
+    const radius = STEM_RADIUS * (1 - 0.18 * Math.pow(v, 1.4));
+    // Gentle S-bend so the stem isn't dead-straight.
+    const bendX = Math.sin(v * Math.PI * 1.2) * 0.012;
+    const bendZ = Math.sin(v * Math.PI * 0.8 + 1.7) * 0.010;
     for (let i = 0; i < STEM_SIDES; i++) {
       const a = (i / STEM_SIDES) * Math.PI * 2;
-      positions.push(Math.cos(a) * STEM_RADIUS, y, Math.sin(a) * STEM_RADIUS);
-      uvs.push(R_STEM, ring);
+      positions.push(
+        bendX + Math.cos(a) * radius,
+        y,
+        bendZ + Math.sin(a) * radius
+      );
+      // uv.y carries the 0..1 length param for shader gradients/noise.
+      uvs.push(R_STEM, v);
+      localUs.push(i / STEM_SIDES);
     }
   }
-  for (let i = 0; i < STEM_SIDES; i++) {
-    const b1 = i;
-    const b2 = (i + 1) % STEM_SIDES;
-    const t1 = STEM_SIDES + i;
-    const t2 = STEM_SIDES + ((i + 1) % STEM_SIDES);
-    indices.push(b1, b2, t2, b1, t2, t1);
+  for (let ring = 0; ring < STEM_RINGS; ring++) {
+    const base = ring * STEM_SIDES;
+    const next = (ring + 1) * STEM_SIDES;
+    for (let i = 0; i < STEM_SIDES; i++) {
+      const b1 = base + i;
+      const b2 = base + ((i + 1) % STEM_SIDES);
+      const t1 = next + i;
+      const t2 = next + ((i + 1) % STEM_SIDES);
+      indices.push(b1, b2, t2, b1, t2, t1);
+    }
   }
 
   // --- Petals: 7 individual 3D petals radiating from a small inner ring.
@@ -102,7 +130,23 @@ function buildFlowerGeometry(): BufferGeometry {
 
     for (let row = 0; row <= PETAL_SEG_V; row++) {
       const v = row / PETAL_SEG_V; // 0 at base of petal, 1 at tip
-      const w = PETAL_WIDTH * Math.pow(Math.sin(v * Math.PI), 0.75);
+      // Capsule profile: tapered base, parallel sides through the middle,
+      // rounded semicircular tip. Matches hepatica petals which are broad
+      // and rounded at the tip rather than pointed.
+      // Wider rounded cap → tip reads as a clean semicircle, not a stub.
+      const baseEnd = 0.28;
+      const tipStart = 0.55;
+      let widthFactor: number;
+      if (v < baseEnd) {
+        const t = v / baseEnd;
+        widthFactor = Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t)));
+      } else if (v < tipStart) {
+        widthFactor = 1.0;
+      } else {
+        const t = (v - tipStart) / (1 - tipStart);
+        widthFactor = Math.sqrt(Math.max(0, 1 - t * t));
+      }
+      const w = PETAL_WIDTH * widthFactor;
 
       for (let col = 0; col <= PETAL_SEG_U; col++) {
         const u = col / PETAL_SEG_U; // 0..1 across petal width
@@ -121,8 +165,8 @@ function buildFlowerGeometry(): BufferGeometry {
         const wy = STEM_HEIGHT + verticalZ + yOffset;
 
         positions.push(wx, wy, wz);
-        // uv.y carries petal-v; lateral u stored in `aLocalU` below.
         uvs.push(R_PETAL, v);
+        localUs.push(u);
       }
     }
 
@@ -138,27 +182,39 @@ function buildFlowerGeometry(): BufferGeometry {
     }
   }
 
-  // --- Pistil: small olive dome (cone) at center ---
-  const pistilBaseY = STEM_HEIGHT + 0.02;
-  const pistilTipY = pistilBaseY + 0.03;
-  const pistilBaseIdx = positions.length / 3;
-  for (let i = 0; i < PISTIL_SIDES; i++) {
-    const a = (i / PISTIL_SIDES) * Math.PI * 2;
-    positions.push(Math.cos(a) * PISTIL_R, pistilBaseY, Math.sin(a) * PISTIL_R);
-    uvs.push(R_PISTIL, 0);
-  }
-  const pistilTipIdx = positions.length / 3;
-  positions.push(0, pistilTipY, 0);
-  uvs.push(R_PISTIL, 1);
-  for (let i = 0; i < PISTIL_SIDES; i++) {
-    indices.push(
-      pistilBaseIdx + i,
-      pistilBaseIdx + ((i + 1) % PISTIL_SIDES),
-      pistilTipIdx
-    );
+  // --- Yellow center sphere: small ball at the flower's heart, nested
+  // inside the ring of stamens. ---
+  {
+    const cy = STEM_HEIGHT + 0.022;
+    const baseIdx = positions.length / 3;
+    for (let ring = 0; ring <= CENTER_RINGS; ring++) {
+      const phi = (ring / CENTER_RINGS) * Math.PI; // 0..π
+      const sinPhi = Math.sin(phi);
+      const cosPhi = Math.cos(phi);
+      for (let seg = 0; seg <= CENTER_SEGMENTS; seg++) {
+        const theta = (seg / CENTER_SEGMENTS) * Math.PI * 2;
+        const x = CENTER_R * sinPhi * Math.cos(theta);
+        const z = CENTER_R * sinPhi * Math.sin(theta);
+        const y = cy + CENTER_R * cosPhi;
+        positions.push(x, y, z);
+        uvs.push(R_CENTER, ring / CENTER_RINGS);
+        localUs.push(0.5);
+      }
+    }
+    const cols = CENTER_SEGMENTS + 1;
+    for (let ring = 0; ring < CENTER_RINGS; ring++) {
+      for (let seg = 0; seg < CENTER_SEGMENTS; seg++) {
+        const a = baseIdx + ring * cols + seg;
+        const b = a + 1;
+        const c = a + cols;
+        const d = c + 1;
+        indices.push(a, b, d, a, d, c);
+      }
+    }
   }
 
-  // --- Stamens: 14 small 3D rods with bulb tips, in a ring around the pistil ---
+  // --- Stamens: dense tuft of fine white filaments. No yellow/olive
+  // pistil — the reference center reads as pure stamen cluster. ---
   for (let s = 0; s < STAMEN_COUNT; s++) {
     const a = (s / STAMEN_COUNT) * Math.PI * 2;
     const cx = Math.cos(a) * STAMEN_RING_R;
@@ -176,6 +232,7 @@ function buildFlowerGeometry(): BufferGeometry {
         cz + Math.sin(sa) * STAMEN_BASE_R
       );
       uvs.push(R_STAMEN, 0);
+      localUs.push(0.5);
     }
     // tip ring (slightly bulbous)
     for (let i = 0; i < STAMEN_SIDES; i++) {
@@ -186,11 +243,13 @@ function buildFlowerGeometry(): BufferGeometry {
         cz + Math.sin(sa) * STAMEN_TIP_R
       );
       uvs.push(R_STAMEN, 0.8);
+      localUs.push(0.5);
     }
     // cap center
     const capIdx = positions.length / 3;
     positions.push(cx, stamenTipY + 0.006, cz);
     uvs.push(R_STAMEN, 1.0);
+    localUs.push(0.5);
 
     // side quads
     for (let i = 0; i < STAMEN_SIDES; i++) {
@@ -212,6 +271,7 @@ function buildFlowerGeometry(): BufferGeometry {
   g.setIndex(indices);
   g.setAttribute('position', new Float32BufferAttribute(positions, 3));
   g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  g.setAttribute('aLocalU', new Float32BufferAttribute(localUs, 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
   return g;
@@ -227,11 +287,13 @@ function buildFlowerMaterial(): ShaderMaterial {
       attribute float aBoost;
       attribute vec3 aColor;
       attribute float aSeed;
+      attribute float aLocalU;
       uniform float uTime;
       varying float vBoost;
       varying vec3 vColor;
       varying float vRegion;
       varying float vU;
+      varying float vLocalU;
       varying vec3 vNormal;
 
       void main() {
@@ -239,6 +301,7 @@ function buildFlowerMaterial(): ShaderMaterial {
         vColor = aColor;
         vRegion = uv.x;
         vU = uv.y;
+        vLocalU = aLocalU;
         vNormal = normalize(normalMatrix * normal);
 
         vec3 p = position;
@@ -254,37 +317,70 @@ function buildFlowerMaterial(): ShaderMaterial {
       varying vec3 vColor;
       varying float vRegion;
       varying float vU;
+      varying float vLocalU;
       varying vec3 vNormal;
       uniform float uEmissiveStrength;
 
       void main() {
         vec3 col;
         if (vRegion < 0.20) {
-          col = vec3(0.022, 0.045, 0.028);
+          // Stem: dark mossy green with longitudinal noise mottling and a
+          // subtle cyan bleed near the top where the petal glow leaks down.
+          float stemV = vU; // 0 at base, 1 just below the head
+          vec3 stemA = vec3(0.070, 0.190, 0.090);
+          vec3 stemB = vec3(0.040, 0.120, 0.060);
+          float n = fract(sin(vLocalU * 41.0 + stemV * 17.0) * 43758.5453);
+          float mottle = mix(0.85, 1.20, smoothstep(0.4, 0.7, n));
+          col = mix(stemB, stemA, mottle * 0.55 + 0.35);
+          // Cyan glow near the top, falling off downward.
+          float topGlow = smoothstep(0.55, 1.0, stemV);
+          col += vec3(0.04, 0.10, 0.18) * topGlow * 0.55;
+          // Lateral facing: slightly brighter sides catch moonlight.
+          float face = clamp(abs(vNormal.x) + abs(vNormal.z) * 0.5, 0.0, 1.0);
+          col *= mix(0.85, 1.08, face);
         } else if (vRegion < 0.55) {
-          // Petal: base→tip gradient — darker saturated at base, brighter
-          // and slightly cyaner toward the tip. Subtle rim from normal.
-          // Saturated electric blue. Slightly lighter near the base (where
-          // petals catch ambient bounce) and a touch darker / less saturated
-          // toward the tips so silhouettes read cleanly.
-          vec3 petalBase = vColor * 0.78 + vec3(0.04, 0.06, 0.10);
-          vec3 petalTip  = vColor * 0.55;
+          // Hepatica petal: deep cobalt-royal base, with subtle longitudinal
+          // veining and a slightly darker rim — matches the silhouette
+          // texture visible in the reference photograph.
+          vec3 petalBase = vColor * 0.95;
+          vec3 petalTip  = vColor * 0.70;
           col = mix(petalBase, petalTip, vU);
-          // Subtle inner-cup cyan brightening near the stamen ring.
-          float innerCup = (1.0 - vU) * 0.4;
-          col = mix(col, vec3(0.25, 0.45, 0.75), innerCup * 0.35);
-          // Lambert-ish facing factor — petals facing up get slight lift.
+
+          // Edge darkening: deepen the cobalt toward the lateral petal
+          // edges, lift the centerline. lateral = 0 at centerline, 1 at edge.
+          float lateral = abs(vLocalU - 0.5) * 2.0;
+          float edgeShade = pow(lateral, 1.4) * 0.62;
+          col *= (1.0 - edgeShade);
+
+          // Central spine — a clear brighter ridge running base→tip.
+          float spine = 1.0 - smoothstep(0.0, 0.10, lateral);
+          col += vColor * spine * 0.35 * sin(vU * 3.14159);
+
+          // Longitudinal veins — strong parallel ribs that fade at tip.
+          // Subtractive so they read as deeper-blue grooves.
+          float veinPhase = vLocalU * 10.0;
+          float veinMask = pow(0.5 + 0.5 * cos(veinPhase * 3.14159), 6.0);
+          float veinFade = sin(vU * 3.14159);
+          col *= (1.0 - veinMask * veinFade * 0.45);
+
+          // Tip blush — a slightly brighter halo near the rounded petal
+          // tip, picking up moonlight like the reference.
+          float tipGlow = smoothstep(0.75, 1.0, vU) * (1.0 - lateral * 0.6);
+          col += vColor * tipGlow * 0.18;
+
           float face = clamp(vNormal.y, 0.0, 1.0);
-          col *= mix(0.85, 1.15, face);
+          col *= mix(0.88, 1.10, face);
           col *= uEmissiveStrength * (1.0 + vBoost * 1.6);
         } else if (vRegion < 0.85) {
-          // Pistil — olive dome, slightly brighter at tip.
-          col = mix(vec3(0.05, 0.06, 0.025), vec3(0.20, 0.20, 0.06), vU);
+          // Yellow center sphere — saturated golden yellow, slight rim lift.
+          vec3 yBase = vec3(1.10, 0.85, 0.18);
+          vec3 yTop  = vec3(1.30, 1.05, 0.30);
+          col = mix(yBase, yTop, clamp(vNormal.y, 0.0, 1.0));
         } else {
-          // Stamen — pale filament at base, bright cream bulb at tip.
-          vec3 base = vec3(0.50, 0.46, 0.32);
-          vec3 tip  = vec3(1.10, 1.05, 0.85);
-          col = mix(base, tip, smoothstep(0.6, 1.0, vU));
+          // Stamen — clean white filament, slightly brighter tip.
+          vec3 base = vec3(0.85, 0.85, 0.82);
+          vec3 tip  = vec3(1.20, 1.18, 1.05);
+          col = mix(base, tip, smoothstep(0.55, 1.0, vU));
         }
         gl_FragColor = vec4(col, 1.0);
       }
@@ -313,9 +409,30 @@ export default function FlowerField() {
     const scale = new Vector3();
     const positions = positionsRef.current;
 
+    // Jittered grid placement — eliminates the clumping that pure random
+    // sampling produces. Each grid cell holds at most one flower, offset
+    // within its cell so the layout still reads as organic.
+    const gridN = Math.ceil(Math.sqrt(COUNT));
+    const cell = FIELD_SIZE / gridN;
+    const half = FIELD_SIZE * 0.5;
+    const cellOrder: number[] = [];
+    for (let k = 0; k < gridN * gridN; k++) cellOrder.push(k);
+    // Fisher–Yates shuffle so the first COUNT cells are a random subset
+    // when gridN² > COUNT.
+    for (let k = cellOrder.length - 1; k > 0; k--) {
+      const j = Math.floor(Math.random() * (k + 1));
+      [cellOrder[k], cellOrder[j]] = [cellOrder[j], cellOrder[k]];
+    }
+
     for (let i = 0; i < COUNT; i++) {
-      const x = (Math.random() - 0.5) * FIELD_SIZE;
-      const z = (Math.random() - 0.5) * FIELD_SIZE;
+      const cellIdx = cellOrder[i];
+      const gx = cellIdx % gridN;
+      const gz = Math.floor(cellIdx / gridN);
+      // Jitter within ~70% of the cell to leave a small gap between
+      // neighbors and avoid intersection at max scale.
+      const jitter = cell * 0.7;
+      const x = -half + (gx + 0.5) * cell + (Math.random() - 0.5) * jitter;
+      const z = -half + (gz + 0.5) * cell + (Math.random() - 0.5) * jitter;
       pos.set(x, (Math.random() - 0.5) * 0.04, z);
       positions[i * 2] = x;
       positions[i * 2 + 1] = z;
@@ -324,7 +441,7 @@ export default function FlowerField() {
       const roll = (Math.random() - 0.5) * 0.35;
       e.set(pitch, yaw, roll, 'YXZ');
       q.setFromEuler(e);
-      const s = 0.75 + Math.random() * 0.55;
+      const s = 0.55 + Math.random() * 0.35;
       scale.set(s, s, s);
       m.compose(pos, q, scale);
       mesh.setMatrixAt(i, m);
@@ -336,12 +453,12 @@ export default function FlowerField() {
     const baseColor = new Color();
     for (let i = 0; i < COUNT; i++) {
       seeds[i] = Math.random();
-      // Electric cobalt-royal: hue ~0.62, near-max saturation, lifted L
-      // so the petal reads as glowing blue at default exposure.
+      // Hepatica cobalt: deep royal blue, hue ~0.64 (slight violet lean,
+      // matches the reference photo), full saturation, mid lightness.
       baseColor.setHSL(
-        0.62 + (Math.random() - 0.5) * 0.025,
+        0.64 + (Math.random() - 0.5) * 0.02,
         1.0,
-        0.50 + Math.random() * 0.06
+        0.46 + Math.random() * 0.05
       );
       colors[i * 3] = baseColor.r;
       colors[i * 3 + 1] = baseColor.g;
