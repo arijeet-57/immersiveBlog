@@ -16,7 +16,9 @@ import {
 } from 'three';
 import { useAppStore } from '../store/appStore';
 
-const FIELD_VISIBLE_TO = 0.55;
+// Flower field stays on past the bridge so the field doesn't vanish
+// behind the camera mid-scroll — fog handles distance fade.
+const FIELD_VISIBLE_TO = 0.70;
 
 const COUNT = 2000;
 const FIELD_SIZE = 40;

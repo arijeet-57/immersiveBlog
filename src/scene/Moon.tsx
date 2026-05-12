@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { Billboard } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
 import {
   AdditiveBlending,
   DoubleSide,
@@ -13,7 +12,7 @@ import { setSunMesh } from './sunRef';
 // don't render a separate emitter and end up with two moons in frame.
 
 const MOON_POS: [number, number, number] = [0, 88, -490];
-const MOON_RADIUS = 26;
+const MOON_RADIUS = 15;
 
 // Procedural moon-surface shader: cool-white base with low-frequency mare
 // patches and a faint terminator dimming on the edge.
@@ -62,8 +61,10 @@ function buildMoonMaterial(): ShaderMaterial {
         return v;
       }
       void main() {
-        vec3 base = vec3(0.92, 0.94, 1.00);     // cool white
-        vec3 mare = vec3(0.55, 0.62, 0.78);     // bluish-grey lowlands
+        // Blue-hour moon: dimmer, distinctly cool. The whole disc reads as
+        // pale blue rather than near-white so it doesn't overpower the scene.
+        vec3 base = vec3(0.265, 0.317, 0.398);
+        vec3 mare = vec3(0.143, 0.194, 0.286);
         float n = fbm(vLocalPos * 0.18);
         float patches = smoothstep(0.45, 0.62, n);
         vec3 col = mix(base, mare, patches * 0.55);
@@ -98,10 +99,12 @@ function buildHaloMaterial(): ShaderMaterial {
       void main() {
         float d = length(vUv - 0.5) * 2.0;
         // Tight inner core fades to soft outer halo
-        float core = smoothstep(0.55, 0.18, d);
-        float outer = smoothstep(1.0, 0.30, d);
-        float a = max(core * 0.85, outer * 0.35);
-        vec3 col = mix(vec3(0.55, 0.80, 1.05), vec3(0.95, 0.98, 1.05), core);
+        // Halo confined tight to the disc so it can't extend visually
+        // past the moon and bleed around tree trunks in screen space.
+        float core = smoothstep(0.50, 0.20, d);
+        float outer = smoothstep(0.85, 0.40, d);
+        float a = max(core * 0.286, outer * 0.102);
+        vec3 col = mix(vec3(0.184, 0.256, 0.367), vec3(0.286, 0.347, 0.439), core);
         gl_FragColor = vec4(col * a, a);
       }
     `,
@@ -113,89 +116,9 @@ function buildHaloMaterial(): ShaderMaterial {
   });
 }
 
-// Wispy procedural cloud — drifting fbm with soft alpha cutout.
-function buildCloudMaterial(seed: number, driftSpeed: number): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uSeed: { value: seed },
-      uDrift: { value: driftSpeed },
-    },
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      uniform float uSeed;
-      uniform float uDrift;
-      varying vec2 vUv;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float vnoise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        float a = hash(i);
-        float b = hash(i + vec2(1.0, 0.0));
-        float c = hash(i + vec2(0.0, 1.0));
-        float d = hash(i + vec2(1.0, 1.0));
-        vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-      }
-      float fbm(vec2 p) {
-        float v = 0.0, amp = 0.5;
-        for (int i = 0; i < 5; i++) {
-          v += amp * vnoise(p);
-          p *= 2.05; amp *= 0.5;
-        }
-        return v;
-      }
-      void main() {
-        // Long, thin wisps: stretch UV horizontally before fbm
-        vec2 p = vec2(vUv.x * 1.6 + uTime * uDrift, vUv.y * 4.0 + uSeed);
-        float n = fbm(p);
-        // Soft top/bottom feather and horizontal feather so quad edges hide
-        float feather = smoothstep(0.0, 0.18, vUv.x) * smoothstep(1.0, 0.82, vUv.x)
-                      * smoothstep(0.0, 0.30, vUv.y) * smoothstep(1.0, 0.70, vUv.y);
-        float a = smoothstep(0.48, 0.78, n) * feather * 0.55;
-        vec3 col = vec3(0.78, 0.82, 0.92);
-        gl_FragColor = vec4(col, a);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-  });
-}
-
-// 4 cloud quads parameterized to drift across the moon plane at varied
-// depths. Some pass in front, some behind (z-offset relative to moon).
-const CLOUDS: Array<{
-  pos: [number, number, number];
-  size: [number, number];
-  seed: number;
-  drift: number;
-}> = [
-  { pos: [-22, 88, -470], size: [110, 22], seed: 1.3, drift: 0.012 },
-  { pos: [ 30, 78, -465], size: [130, 20], seed: 4.9, drift: 0.009 },
-  { pos: [-14, 96, -500], size: [150, 26], seed: 7.2, drift: 0.014 },
-  { pos: [ 38, 100,-510], size: [100, 18], seed: 2.1, drift: 0.008 },
-];
-
 export default function Moon() {
   const moonMat = useMemo(() => buildMoonMaterial(), []);
   const haloMat = useMemo(() => buildHaloMaterial(), []);
-  const cloudMats = useMemo(
-    () => CLOUDS.map((c) => buildCloudMaterial(c.seed, c.drift)),
-    []
-  );
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
-    for (const m of cloudMats) {
-      m.uniforms.uTime.value = t;
-    }
-  });
 
   return (
     <>
@@ -203,6 +126,7 @@ export default function Moon() {
         ref={setSunMesh}
         position={MOON_POS}
         material={moonMat}
+        renderOrder={-1}
       >
         <sphereGeometry args={[MOON_RADIUS, 64, 64]} />
       </mesh>
@@ -210,17 +134,9 @@ export default function Moon() {
           camera and never disappears behind the sphere edge. */}
       <Billboard position={[MOON_POS[0], MOON_POS[1], MOON_POS[2] + 0.5]}>
         <mesh material={haloMat}>
-          <planeGeometry args={[MOON_RADIUS * 4.5, MOON_RADIUS * 4.5]} />
+          <planeGeometry args={[MOON_RADIUS * 1.6, MOON_RADIUS * 1.6]} />
         </mesh>
       </Billboard>
-      {/* Cloud quads — billboarded so they always face the viewer */}
-      {CLOUDS.map((c, i) => (
-        <Billboard key={i} position={c.pos}>
-          <mesh material={cloudMats[i]}>
-            <planeGeometry args={c.size} />
-          </mesh>
-        </Billboard>
-      ))}
     </>
   );
 }

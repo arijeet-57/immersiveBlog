@@ -16,7 +16,7 @@ import {
 } from 'three';
 import { useAppStore } from '../store/appStore';
 
-const FOLIAGE_VISIBLE_TO = 0.55;
+const FOLIAGE_VISIBLE_TO = 0.70;
 
 const FIELD_SIZE = 40;
 const GRASS_COUNT = 6000;

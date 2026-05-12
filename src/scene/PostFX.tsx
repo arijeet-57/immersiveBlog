@@ -1,22 +1,20 @@
-import { EffectComposer, Bloom, GodRays } from '@react-three/postprocessing';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { BloomEffect } from 'postprocessing';
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Mesh } from 'three';
-import { subscribeSun } from './sunRef';
 import { useAppStore } from '../store/appStore';
 
 // Bloom intensity baseline and the "bridge moment" peak as the camera flies
 // directly over the widened section of the river at scroll ≈ 0.68.
-const BLOOM_BASE = 0.75;
-const BLOOM_BRIDGE_PEAK = 1.45;
+const BLOOM_BASE = 0.40;
+const BLOOM_BRIDGE_PEAK = 0.95;
 const BRIDGE_START = 0.60;
 const BRIDGE_PEAK = 0.68;
 const BRIDGE_END = 0.76;
 
 // Moonrise: bloom swells as the camera breaks the canopy and the moon
 // dominates the upper third of the frame.
-const BLOOM_MOON_PEAK = 2.0;
+const BLOOM_MOON_PEAK = 0.56;
 const MOON_START = 0.85;
 const MOON_END = 1.0;
 
@@ -51,44 +49,22 @@ function BloomController({ bloomRef }: { bloomRef: BloomRef }) {
 }
 
 export default function PostFX() {
-  // The moon (from <Environment />) doubles as the GodRays light source —
-  // a separate emitter mesh would render as a visible "second moon".
-  const [sun, setSun] = useState<Mesh | null>(null);
-  useEffect(() => subscribeSun(setSun), []);
+  // GodRays was removed: the postprocessing library's screen-space radial
+  // blur composited the moon's bright pixels additively over the final
+  // scene, ignoring depth — which created a "ghost moon" visible through
+  // tree trunks. The forest mist + bloom alone read as atmospheric volume.
   const bloomRef = useRef<BloomEffect>(null);
 
   return (
     <>
-      <EffectComposer multisampling={0} key={sun ? 'with-rays' : 'no-rays'}>
-        {sun ? (
-          <>
-            <Bloom
-              ref={bloomRef as unknown as React.Ref<typeof BloomEffect>}
-              intensity={BLOOM_BASE}
-              luminanceThreshold={0.85}
-              luminanceSmoothing={0.4}
-              mipmapBlur
-            />
-            <GodRays
-              sun={sun}
-              samples={30}
-              density={0.94}
-              decay={0.94}
-              weight={0.32}
-              exposure={0.30}
-              clampMax={1.0}
-              blur
-            />
-          </>
-        ) : (
-          <Bloom
-            ref={bloomRef as unknown as React.Ref<typeof BloomEffect>}
-            intensity={BLOOM_BASE}
-            luminanceThreshold={0.85}
-            luminanceSmoothing={0.4}
-            mipmapBlur
-          />
-        )}
+      <EffectComposer multisampling={0}>
+        <Bloom
+          ref={bloomRef as unknown as React.Ref<typeof BloomEffect>}
+          intensity={BLOOM_BASE}
+          luminanceThreshold={1.05}
+          luminanceSmoothing={0.4}
+          mipmapBlur
+        />
       </EffectComposer>
       <BloomController bloomRef={bloomRef} />
     </>

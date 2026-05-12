@@ -33,10 +33,12 @@ const VALLEY_DEPTH = VALLEY_Z_NEAR - VALLEY_Z_FAR; // positive
 // Counts tuned for steady 60fps. Instanced meshes are one draw call each but
 // the GPU still runs the vertex shader per-instance × per-vertex, so total
 // vertex throughput is the bottleneck, not draw-call count.
-const FLOWER_COUNT = 50000;
-const LAVENDER_COUNT = 15000;
+const FLOWER_COUNT = 90000;
+const LAVENDER_COUNT = 20000;
 const GRASS_COUNT = 14000;
 const TWIG_COUNT = 900;
+const BUSH_COUNT = 2000;
+const LEAF_COUNT = 6000;
 const FIREFLY_COUNT = 1200;
 
 // Shared hill height function — must match the shader displacement below so
@@ -684,6 +686,193 @@ function buildTwigMaterial(): ShaderMaterial {
   });
 }
 
+// --- Bush: hemispherical cluster of broadleaf cards --------------------
+function buildValleyBushGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const localUs: number[] = [];
+  const indices: number[] = [];
+  let seedI = 0;
+  const rand = () => {
+    seedI++;
+    return ((Math.sin(seedI * 12.9898 + seedI * 78.233) * 43758.5453) % 1 + 1) % 1;
+  };
+  const LEAVES = 30;
+  const SEGS = 3;
+  for (let li = 0; li < LEAVES; li++) {
+    const phi = rand() * Math.PI * 0.55;
+    const theta = rand() * Math.PI * 2;
+    const r = 0.12 + rand() * 0.28;
+    const cx = r * Math.sin(phi) * Math.cos(theta);
+    const cy = 0.10 + r * Math.cos(phi) * 0.9;
+    const cz = r * Math.sin(phi) * Math.sin(theta);
+    const leafLen = 0.16 + rand() * 0.14;
+    const leafW = 0.060 + rand() * 0.045;
+    const yawL = rand() * Math.PI * 2;
+    const pitchL = -0.05 + rand() * 0.85;
+    const cosY = Math.cos(yawL), sinY = Math.sin(yawL);
+    const cosP = Math.cos(pitchL), sinP = Math.sin(pitchL);
+    const baseIdx = positions.length / 3;
+    for (let s = 0; s <= SEGS; s++) {
+      const v = s / SEGS;
+      let w: number;
+      if (v < 0.30) {
+        const t = v / 0.30;
+        w = leafW * Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t)));
+      } else if (v < 0.72) {
+        w = leafW;
+      } else {
+        const t = (v - 0.72) / 0.28;
+        w = leafW * Math.sqrt(Math.max(0, 1 - t * t));
+      }
+      for (let side = 0; side < 2; side++) {
+        const lx = side === 0 ? -w : w;
+        const ly = v * leafLen;
+        const lz = Math.sin(v * Math.PI) * 0.028;
+        const ry = cosP * ly + sinP * lz;
+        const rz = -sinP * ly + cosP * lz;
+        const fx = cosY * lx + sinY * rz;
+        const fz = -sinY * lx + cosY * rz;
+        positions.push(cx + fx, cy + ry, cz + fz);
+        uvs.push(0, v);
+        localUs.push(side);
+      }
+    }
+    for (let s = 0; s < SEGS; s++) {
+      const a = baseIdx + s * 2;
+      indices.push(a, a + 1, a + 3, a, a + 3, a + 2);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setIndex(indices);
+  g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  g.setAttribute('aLocalU', new Float32BufferAttribute(localUs, 1));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+
+function buildValleyBushMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: /* glsl */ `
+      attribute float aLocalU;
+      uniform float uTime;
+      varying float vV;
+      varying float vLocalU;
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+      void main() {
+        vV = uv.y;
+        vLocalU = aLocalU;
+        vNormal = normalize(normalMatrix * normal);
+        vec3 p = position;
+        float tipMask = smoothstep(0.20, 1.0, uv.y);
+        float seed = floor(position.x * 23.0 + position.z * 17.0);
+        p.x += sin(uTime * 0.7 + seed) * 0.014 * tipMask;
+        p.z += cos(uTime * 0.6 + seed * 1.3) * 0.014 * tipMask;
+        vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying float vV;
+      varying float vLocalU;
+      varying vec3 vNormal;
+      varying vec3 vWorldPos;
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      void main() {
+        // Slightly cooler/duskier than the forest bushes to match the moonlit valley.
+        vec3 base = vec3(0.030, 0.075, 0.055);
+        vec3 mid  = vec3(0.060, 0.135, 0.090);
+        vec3 tip  = vec3(0.095, 0.180, 0.125);
+        vec3 col = mix(base, mid, smoothstep(0.0, 0.55, vV));
+        col = mix(col, tip, smoothstep(0.65, 1.0, vV));
+        float n = hash(floor(vWorldPos.xz * 11.0));
+        col *= mix(0.85, 1.15, n);
+        float lateral = abs(vLocalU - 0.5) * 2.0;
+        float vein = 1.0 - smoothstep(0.0, 0.08, lateral);
+        col *= mix(1.0, 0.78, vein);
+        col *= mix(1.0, 1.10, smoothstep(0.55, 1.0, lateral));
+        float up = clamp(vNormal.y, 0.0, 1.0);
+        col *= mix(0.82, 1.18, up);
+        // Cool moonlit rim
+        float side = clamp(1.0 - abs(vNormal.y), 0.0, 1.0);
+        col += vec3(0.020, 0.040, 0.075) * side * 0.65;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    side: DoubleSide,
+    toneMapped: false,
+  });
+}
+
+// --- Leaf: small flat oval card lying on the ground --------------------
+function buildLeafGeometry(): BufferGeometry {
+  const SEGS = 4;
+  const LEN = 0.22;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i <= SEGS; i++) {
+    const v = i / SEGS;
+    // oval profile
+    const w = 0.07 * Math.sin(v * Math.PI);
+    const y = Math.sin(v * Math.PI) * 0.015; // very subtle cup
+    positions.push(-w, y, v * LEN); uvs.push(0, v);
+    positions.push(+w, y, v * LEN); uvs.push(1, v);
+  }
+  for (let i = 0; i < SEGS; i++) {
+    const a = i * 2;
+    indices.push(a, a + 1, a + 3, a, a + 3, a + 2);
+  }
+  const g = new BufferGeometry();
+  g.setIndex(indices);
+  g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+
+function buildLeafMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {},
+    vertexShader: /* glsl */ `
+      attribute vec3 aTint;
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vTint;
+      void main() {
+        vUv = uv;
+        vNormal = normalize(normalMatrix * normal);
+        vTint = aTint;
+        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vTint;
+      void main() {
+        // Vein down the middle
+        float lateral = abs(vUv.x - 0.5) * 2.0;
+        float vein = 1.0 - smoothstep(0.0, 0.10, lateral);
+        vec3 col = vTint;
+        col *= mix(1.0, 0.72, vein);
+        col *= mix(0.95, 1.08, smoothstep(0.55, 1.0, lateral));
+        float up = clamp(vNormal.y, 0.0, 1.0);
+        col *= mix(0.80, 1.12, up);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    side: DoubleSide,
+    toneMapped: false,
+  });
+}
+
 // --- Fireflies (valley-local) ---------------------------------------------
 
 function buildValleyFireflyMaterial(): ShaderMaterial {
@@ -725,7 +914,9 @@ function buildValleyFireflyMaterial(): ShaderMaterial {
 
 // Scroll range during which the valley is visible. Outside this range the
 // whole subtree is set to invisible so its vertex shaders don't run.
-const VALLEY_VISIBLE_FROM = 0.70;
+// Valley is on while still in the forest so the ridge silhouette is
+// visible ahead through the mist rather than popping in at the crest.
+const VALLEY_VISIBLE_FROM = 0.50;
 
 export default function Valley() {
   const groupRef = useRef<Group>(null);
@@ -741,6 +932,12 @@ export default function Valley() {
   const grassMat = useMemo(() => buildGrassMaterial(), []);
   const twigGeom = useMemo(() => buildTwigGeometry(), []);
   const twigMat = useMemo(() => buildTwigMaterial(), []);
+  const bushRef = useRef<InstancedMesh>(null);
+  const leafRef = useRef<InstancedMesh>(null);
+  const bushGeom = useMemo(() => buildValleyBushGeometry(), []);
+  const bushMat = useMemo(() => buildValleyBushMaterial(), []);
+  const leafGeom = useMemo(() => buildLeafGeometry(), []);
+  const leafMat = useMemo(() => buildLeafMaterial(), []);
   const terrainGeom = useMemo(() => bakeTerrainGeometry(), []);
   const terrainMat = useMemo(() => buildTerrainMaterial(), []);
   const fireflyMat = useMemo(() => buildValleyFireflyMaterial(), []);
@@ -934,7 +1131,71 @@ export default function Valley() {
     }
     tmesh.count = TWIG_COUNT;
     tmesh.instanceMatrix.needsUpdate = true;
-  }, [grassGeom]);
+
+    // Bushes — clustered hemispherical broadleaf clumps. Bias placement
+    // toward the valley floor (skip the steeper ridge slopes).
+    const bmesh = bushRef.current;
+    if (bmesh) {
+      let placedBush = 0;
+      for (let i = 0; i < BUSH_COUNT * 2 && placedBush < BUSH_COUNT; i++) {
+        const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
+        const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+        const y = hillHeight(x, z);
+        // Reject the ridge crest (too steep / windswept for bushes)
+        if (z > -210 && y > 10) continue;
+        pos.set(x, y, z);
+        const yaw = Math.random() * Math.PI * 2;
+        const tilt = (Math.random() - 0.5) * 0.18;
+        e.set(tilt, yaw, 0, 'YXZ');
+        q.setFromEuler(e);
+        const s = 0.85 + Math.random() * 1.1;
+        scale.set(s * (0.9 + Math.random() * 0.3), s * (0.75 + Math.random() * 0.55), s * (0.9 + Math.random() * 0.3));
+        m.compose(pos, q, scale);
+        bmesh.setMatrixAt(placedBush, m);
+        placedBush++;
+      }
+      bmesh.count = placedBush;
+      bmesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // Scattered leaves on the ground — small flat cards lying almost flat
+    // with a tiny tilt. Per-instance autumnal/forest-floor tints.
+    const lmesh = leafRef.current;
+    if (lmesh) {
+      const tints = new Float32Array(LEAF_COUNT * 3);
+      const palette: Array<[number, number, number]> = [
+        [0.090, 0.130, 0.055], // dark olive green
+        [0.150, 0.090, 0.035], // dry brown
+        [0.190, 0.115, 0.045], // tan
+        [0.075, 0.110, 0.060], // moss green
+        [0.140, 0.075, 0.030], // dark brown
+      ];
+      for (let i = 0; i < LEAF_COUNT; i++) {
+        const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
+        const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+        const y = hillHeight(x, z);
+        pos.set(x, y + 0.008, z);
+        // Leaves lie mostly flat: pitch ~ -π/2 ± small jitter
+        const pitch = -Math.PI / 2 + (Math.random() - 0.5) * 0.35;
+        const yaw = Math.random() * Math.PI * 2;
+        const roll = (Math.random() - 0.5) * 0.3;
+        e.set(pitch, yaw, roll, 'YXZ');
+        q.setFromEuler(e);
+        const s = 0.7 + Math.random() * 0.9;
+        scale.set(s, s, s);
+        m.compose(pos, q, scale);
+        lmesh.setMatrixAt(i, m);
+        const c = palette[Math.floor(Math.random() * palette.length)];
+        const k = 0.8 + Math.random() * 0.4;
+        tints[i * 3 + 0] = c[0] * k;
+        tints[i * 3 + 1] = c[1] * k;
+        tints[i * 3 + 2] = c[2] * k;
+      }
+      lmesh.count = LEAF_COUNT;
+      lmesh.instanceMatrix.needsUpdate = true;
+      leafGeom.setAttribute('aTint', new InstancedBufferAttribute(tints, 3));
+    }
+  }, [grassGeom, bushGeom, leafGeom]);
 
   useFrame((state) => {
     const s = useAppStore.getState().scrollProgress;
@@ -945,6 +1206,7 @@ export default function Valley() {
     flowerMat.uniforms.uTime.value = t;
     lavenderMat.uniforms.uTime.value = t;
     grassMat.uniforms.uTime.value = t;
+    bushMat.uniforms.uTime.value = t;
     fireflyMat.uniforms.uTime.value = t;
   });
 
@@ -973,6 +1235,16 @@ export default function Valley() {
       <instancedMesh
         ref={twigRef}
         args={[twigGeom, twigMat, TWIG_COUNT]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={bushRef}
+        args={[bushGeom, bushMat, BUSH_COUNT]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={leafRef}
+        args={[leafGeom, leafMat, LEAF_COUNT]}
         frustumCulled={false}
       />
       <points geometry={fireflyGeom} material={fireflyMat} frustumCulled={false} />
