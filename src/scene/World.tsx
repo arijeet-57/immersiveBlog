@@ -6,12 +6,16 @@ import Environment from './Environment';
 import FlowerField from './FlowerField';
 import Foliage from './Foliage';
 import Fireflies from './Fireflies';
+import BiolumeRiver from './BiolumeRiver';
+import DarkForest from './DarkForest';
+import Valley from './Valley';
+import Moon from './Moon';
 
 export default function World() {
   return (
     <Canvas
       gl={{ antialias: true, powerPreference: 'high-performance' }}
-      dpr={[1, 2]}
+      dpr={[1, 1.5]}
       camera={{ position: [0, 15, 0], fov: 45, near: 0.05, far: 1000 }}
       style={{ position: 'fixed', inset: 0, background: '#000' }}
     >
@@ -22,6 +26,10 @@ export default function World() {
         <Environment />
         <Foliage />
         <FlowerField />
+        <BiolumeRiver />
+        <DarkForest />
+        <Valley />
+        <Moon />
         <Fireflies />
         <PostFX />
       </Suspense>

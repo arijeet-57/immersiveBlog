@@ -6,6 +6,7 @@ import {
   DoubleSide,
   Euler,
   Float32BufferAttribute,
+  Group,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -13,6 +14,9 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
+import { useAppStore } from '../store/appStore';
+
+const FIELD_VISIBLE_TO = 0.55;
 
 const COUNT = 2000;
 const FIELD_SIZE = 40;
@@ -391,6 +395,7 @@ function buildFlowerMaterial(): ShaderMaterial {
 }
 
 export default function FlowerField() {
+  const groupRef = useRef<Group>(null);
   const meshRef = useRef<InstancedMesh>(null);
   const positionsRef = useRef(new Float32Array(COUNT * 2));
   const boostsRef = useRef(new Float32Array(COUNT));
@@ -470,6 +475,10 @@ export default function FlowerField() {
   }, [geometry]);
 
   useFrame((state, dt) => {
+    const s = useAppStore.getState().scrollProgress;
+    const visible = s <= FIELD_VISIBLE_TO;
+    if (groupRef.current) groupRef.current.visible = visible;
+    if (!visible) return;
     material.uniforms.uTime.value = state.clock.elapsedTime;
     const boosts = boostsRef.current;
     const positions = positionsRef.current;
@@ -496,7 +505,7 @@ export default function FlowerField() {
   });
 
   return (
-    <>
+    <group ref={groupRef}>
       <instancedMesh ref={meshRef} args={[geometry, material, COUNT]} frustumCulled={false} />
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
@@ -512,6 +521,6 @@ export default function FlowerField() {
         <planeGeometry args={[FIELD_SIZE, FIELD_SIZE]} />
         <meshBasicMaterial visible={false} />
       </mesh>
-    </>
+    </group>
   );
 }

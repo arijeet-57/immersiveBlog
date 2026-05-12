@@ -1,14 +1,9 @@
 import { Link } from 'react-router-dom';
 import GlassPanel from '../GlassPanel';
 import { usePinClose } from './usePinClose';
+import { posts } from '../../content/posts';
 
-const PLACEHOLDER_POSTS = [
-  { slug: 'first-bloom',     title: 'The First Bloom',          date: '2026-04-12' },
-  { slug: 'a-quiet-river',   title: 'A Quiet River',            date: '2026-04-29' },
-  { slug: 'between-trunks',  title: 'Between Trunks',           date: '2026-05-02' },
-  { slug: 'moonlight-shape', title: 'The Shape of Moonlight',   date: '2026-05-06' },
-  { slug: 'last-firefly',    title: 'The Last Firefly Tonight', date: '2026-05-10' },
-];
+const RECENT = posts.slice(0, 5);
 
 export default function ChroniclesPanel() {
   const { pinned, close } = usePinClose('chronicles');
@@ -23,7 +18,7 @@ export default function ChroniclesPanel() {
         CHRONICLES
       </div>
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-        {PLACEHOLDER_POSTS.map((p) => (
+        {RECENT.map((p) => (
           <li key={p.slug} style={{ marginBottom: 12 }}>
             <Link
               to={`/chronicles/${p.slug}`}

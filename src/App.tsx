@@ -7,6 +7,9 @@ import RouteSync from './routes/RouteSync';
 import RevealLayer from './ui/RevealLayer';
 import Hud from './ui/Hud';
 import ScrollProgress from './ui/ScrollProgress';
+import SeoPostBodies from './content/SeoPostBodies';
+import Loader from './ui/Loader';
+import PinnedScrollHint from './ui/PinnedScrollHint';
 
 export default function App() {
   return (
@@ -19,6 +22,8 @@ export default function App() {
           <RevealLayer />
           <Hud />
           <ScrollProgress />
+          <PinnedScrollHint />
+          <SeoPostBodies />
           {/* Scrollable spacer — gives the page enough vertical length to
               cover all four acts. Longer = each panel range corresponds to
               more pixels, so the reader has more dwell time. RevealLayer
@@ -26,6 +31,7 @@ export default function App() {
               taking layout space. */}
           <div aria-hidden="true" style={{ height: '1400vh' }} />
         </SmoothScrollProvider>
+        <Loader />
       </BrowserRouter>
     </HelmetProvider>
   );

@@ -6,6 +6,7 @@ import {
   DoubleSide,
   Euler,
   Float32BufferAttribute,
+  Group,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -13,6 +14,9 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
+import { useAppStore } from '../store/appStore';
+
+const FOLIAGE_VISIBLE_TO = 0.55;
 
 const FIELD_SIZE = 40;
 const GRASS_COUNT = 6000;
@@ -199,9 +203,23 @@ function useScatter(
     const scale = new Vector3();
     const seeds = new Float32Array(count);
 
+    // River basin sits at z ≈ -25 with a ~18-wide wet strip. Keep foliage
+    // out of that zone so grass/leaves/twigs don't poke through the water
+    // surface. Resample if the candidate falls inside the bank.
+    const RIVER_Z = -25;
+    const BANK_HALF = 10; // 1-unit margin past the basin's visible edge
     for (let i = 0; i < count; i++) {
-      const x = (Math.random() - 0.5) * FIELD_SIZE;
-      const z = (Math.random() - 0.5) * FIELD_SIZE;
+      let x = 0;
+      let z = 0;
+      for (let tries = 0; tries < 8; tries++) {
+        x = (Math.random() - 0.5) * FIELD_SIZE;
+        z = (Math.random() - 0.5) * FIELD_SIZE;
+        if (Math.abs(z - RIVER_Z) > BANK_HALF) break;
+      }
+      if (Math.abs(z - RIVER_Z) <= BANK_HALF) {
+        // Push the stragglers to the field side of the bank.
+        z = RIVER_Z + BANK_HALF + Math.random() * 2;
+      }
       const y = (Math.random() - 0.5) * yJitter;
       pos.set(x, y, z);
       const pitch = (Math.random() - 0.5) * tiltAmount;
@@ -263,11 +281,16 @@ function Twigs() {
 }
 
 export default function Foliage() {
+  const groupRef = useRef<Group>(null);
+  useFrame(() => {
+    const s = useAppStore.getState().scrollProgress;
+    if (groupRef.current) groupRef.current.visible = s <= FOLIAGE_VISIBLE_TO;
+  });
   return (
-    <>
+    <group ref={groupRef}>
       <Twigs />
       <Leaves />
       <Grass />
-    </>
+    </group>
   );
 }

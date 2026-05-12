@@ -23,7 +23,12 @@ export default function RouteSync() {
     const spec = routeToPanel(pathname);
     if (spec) {
       setPinned(spec.id);
-      // Defer the scroll a tick to let Lenis attach.
+      // Cold-load deep-link: seed the store synchronously so the camera's
+      // first frame is already on-target. The DOM scroll is then aligned via
+      // Lenis on the next rAF (with immediate:true so there's no fly-through).
+      if (isColdLoad.current) {
+        useAppStore.getState().setScrollProgress(spec.range[1]);
+      }
       requestAnimationFrame(() => {
         scrollToProgress(spec.range[1], { immediate: isColdLoad.current });
       });

@@ -52,6 +52,56 @@ canvas {
   to   { --sweep-angle: 360deg; }
 }
 
+/* 0.6Hz breathe for the Seed-of-Light loader (1.66s period). */
+@keyframes seed-breathe {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.55;
+    filter: brightness(0.85);
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 1;
+    filter: brightness(1.15);
+  }
+}
+
+@keyframes hint-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 0.7; transform: translateY(0); }
+}
+
+.scroll-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  font: 11px/1 Inter, system-ui, sans-serif;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 20;
+  animation: hint-rise 0.8s ease-out 0.4s both;
+}
+
+.scroll-hint::after {
+  content: '↓';
+  display: block;
+  margin-top: 6px;
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 0;
+  animation: hint-arrow 1.6s ease-in-out infinite;
+}
+
+@keyframes hint-arrow {
+  0%, 100% { transform: translateY(0); opacity: 0.65; }
+  50%       { transform: translateY(4px); opacity: 1; }
+}
+
 .reveal-layer {
   position: fixed;
   inset: 0;
