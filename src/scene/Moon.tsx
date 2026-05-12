@@ -61,10 +61,10 @@ function buildMoonMaterial(): ShaderMaterial {
         return v;
       }
       void main() {
-        // Blue-hour moon: dimmer, distinctly cool. The whole disc reads as
-        // pale blue rather than near-white so it doesn't overpower the scene.
-        vec3 base = vec3(0.265, 0.317, 0.398);
-        vec3 mare = vec3(0.143, 0.194, 0.286);
+        // Blue-hour moon: deep ice-blue. The disc reads clearly blue
+        // rather than gray so it harmonizes with the dark-blue sky.
+        vec3 base = vec3(0.155, 0.245, 0.520);
+        vec3 mare = vec3(0.060, 0.115, 0.355);
         float n = fbm(vLocalPos * 0.18);
         float patches = smoothstep(0.45, 0.62, n);
         vec3 col = mix(base, mare, patches * 0.55);
@@ -104,7 +104,7 @@ function buildHaloMaterial(): ShaderMaterial {
         float core = smoothstep(0.50, 0.20, d);
         float outer = smoothstep(0.85, 0.40, d);
         float a = max(core * 0.286, outer * 0.102);
-        vec3 col = mix(vec3(0.184, 0.256, 0.367), vec3(0.286, 0.347, 0.439), core);
+        vec3 col = mix(vec3(0.080, 0.165, 0.470), vec3(0.160, 0.245, 0.580), core);
         gl_FragColor = vec4(col * a, a);
       }
     `,

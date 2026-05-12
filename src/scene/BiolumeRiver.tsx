@@ -29,7 +29,7 @@ import {
 // directly over its widest section at scroll ≈ 0.68 — the "bridge moment".
 
 const RIVER_Z = -25;
-const RIVER_WIDTH = 7.0;
+const RIVER_WIDTH = 11.0;
 const SEGMENTS_LEN = 220;
 const SEGMENTS_W = 1;
 
@@ -89,7 +89,7 @@ function buildRiverMaterial(): ShaderMaterial {
       uTime: { value: 0 },
       // Moon position must match Moon.tsx (MOON_POS)
       uMoonPos: { value: new Vector3(0, 88, -490) },
-      uMoonColor: { value: new Vector3(1.0, 0.96, 0.88) },
+      uMoonColor: { value: new Vector3(0.50, 0.68, 1.20) },
     },
     vertexShader: /* glsl */ `
       uniform float uTime;
@@ -145,9 +145,9 @@ function buildRiverMaterial(): ShaderMaterial {
       // increasing speed give the look of small wavelets riding on slow
       // swells. A tiny cross-shear keeps it from feeling like a conveyor.
       float waveHeight(vec2 uv) {
-        vec2 a = vec2(uv.x *  6.0, uv.y *  20.0 - uTime * 0.55);
-        vec2 b = vec2(uv.x * 12.0 + uTime * 0.10, uv.y * 42.0 - uTime * 0.95);
-        vec2 c = vec2(uv.x * 24.0 - uTime * 0.05, uv.y * 88.0 - uTime * 1.55);
+        vec2 a = vec2(uv.x *  6.0, uv.y *  20.0 - uTime * 1.30);
+        vec2 b = vec2(uv.x * 12.0 + uTime * 0.18, uv.y * 42.0 - uTime * 2.10);
+        vec2 c = vec2(uv.x * 24.0 - uTime * 0.10, uv.y * 88.0 - uTime * 3.40);
         return fbm(a) * 0.55 + fbm(b) * 0.30 + fbm(c) * 0.18;
       }
 
@@ -156,8 +156,8 @@ function buildRiverMaterial(): ShaderMaterial {
       // reflection picks up flickering pinpricks.
       vec3 skyColor(vec3 dir) {
         float h = clamp(dir.y, 0.0, 1.0);
-        vec3 zenith  = vec3(0.006, 0.012, 0.030);
-        vec3 horizon = vec3(0.025, 0.045, 0.085);
+        vec3 zenith  = vec3(0.020, 0.045, 0.110);
+        vec3 horizon = vec3(0.045, 0.085, 0.180);
         vec3 c = mix(horizon, zenith, smoothstep(0.0, 0.6, h));
         // Pseudo-stars: hash the direction grid; only very few cells light up.
         vec2 sphereUV = vec2(atan(dir.z, dir.x), dir.y);
@@ -201,19 +201,22 @@ function buildRiverMaterial(): ShaderMaterial {
         reflCol += uMoonColor * moonDisc * 4.0;
         reflCol += uMoonColor * moonHalo * 0.55;
 
-        // --- Body / refraction: cyan-teal emissive base -----------------
-        vec3 deep = vec3(0.050, 0.230, 0.360);
-        vec3 mid  = vec3(0.180, 0.560, 0.780);
-        vec3 glow = vec3(0.70, 1.20, 1.50);
+        // --- Body: clear glass over dark depth --------------------------
+        // Nearly black so the surface reads as transparent water above a
+        // deep, unlit substrate. All visible character now comes from the
+        // reflection layer (sky, moon, halo, trail, specular, glitter).
+        vec3 deep = vec3(0.006, 0.010, 0.014);
+        vec3 mid  = vec3(0.020, 0.028, 0.034);
+        vec3 glow = vec3(0.12, 0.15, 0.17);
         float depthMix = smoothstep(0.0, 1.0, h0);
         vec3 bodyCol = mix(deep, mid, depthMix);
 
-        // Drifting caustic veins riding the flow
-        float caustic = pow(0.5 + 0.5 * sin((h0 * 8.0 + vUv.y * 30.0) - uTime * 1.4), 5.0);
-        bodyCol += glow * caustic * 0.55;
-        // Slow subsurface shimmer
-        float shimmer = pow(0.5 + 0.5 * sin(h0 * 14.0 - uTime * 0.8), 4.0);
-        bodyCol += vec3(0.20, 0.45, 0.60) * shimmer * 0.35;
+        // Caustic veins kept extremely subtle — like faint refraction
+        // bands through clear water, not glowing cyan ribbons.
+        float caustic = pow(0.5 + 0.5 * sin((h0 * 8.0 + vUv.y * 30.0) - uTime * 2.8), 5.0);
+        bodyCol += glow * caustic * 0.10;
+        float shimmer = pow(0.5 + 0.5 * sin(h0 * 14.0 - uTime * 1.8), 4.0);
+        bodyCol += vec3(0.06, 0.07, 0.08) * shimmer * 0.15;
 
         // --- Moon-glitter: dancing sparkles along the moon's reflection
         //     path. Uses the choppy normal so most fragments are dark and
@@ -250,26 +253,27 @@ function buildRiverMaterial(): ShaderMaterial {
         trail *= 0.4 + 0.6 * trailRipple;
 
         // --- Compose ----------------------------------------------------
-        // Emissive body shows through; the reflection mixes in via fresnel.
-        // max() against bodyCol prevents the dark sky from dimming the river
-        // (we only want reflections to ADD light, like a real glassy surface
-        // over a glowing pool).
-        vec3 reflectionContribution = max(reflCol - bodyCol * 0.5, vec3(0.0));
-        vec3 col = bodyCol + reflectionContribution * fres;
+        // Glass model: dark body shows through where fresnel is low (looking
+        // straight down), while reflections take over at grazing angles.
+        // Reflections are NOT clamped against the body — clear glass lets
+        // the moon and sky add their full intensity on top of the dark depth.
+        // A small floor on fresnel keeps a faint sheen even on flat areas.
+        float reflMix = clamp(fres + 0.05, 0.0, 1.0);
+        vec3 col = mix(bodyCol, reflCol, reflMix);
         col += uMoonColor * (specSharp + specBroad + glitter);
         col += uMoonColor * trail * 0.85;
 
         // --- Drifting foam streaks along the flow -----------------------
-        float streak1 = fbm(vec2(vUv.x * 22.0, vUv.y * 4.5 - uTime * 0.85));
-        float streak2 = fbm(vec2(vUv.x * 38.0 + 7.0, vUv.y * 2.2 - uTime * 1.25));
+        float streak1 = fbm(vec2(vUv.x * 22.0, vUv.y * 4.5 - uTime * 1.90));
+        float streak2 = fbm(vec2(vUv.x * 38.0 + 7.0, vUv.y * 2.2 - uTime * 2.70));
         float streakMask = smoothstep(0.62, 0.85, streak1) * smoothstep(0.55, 0.80, streak2);
         float calm = 1.0 - smoothstep(0.0, 0.30, abs(hu - h0) + abs(hv - h0));
         vec3 foamCol = vec3(0.65, 0.85, 1.00);
 
         // Bank fade so the river hugs the basin shape.
         float bankFade = 1.0 - pow(abs(vUv.x - 0.5) * 2.0, 3.0);
-        col *= mix(0.55, 1.0, bankFade);
-        col += foamCol * streakMask * calm * bankFade * 0.55;
+        col *= mix(0.78, 1.0, bankFade);
+        col += foamCol * streakMask * calm * bankFade * 0.30;
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -439,10 +443,10 @@ function buildRockMaterial(): ShaderMaterial {
         float rim = pow(1.0 - clamp(vWorldNormal.y, 0.0, 1.0), 2.5);
         col += vec3(0.020, 0.035, 0.060) * rim * 0.7;
 
-        // Cyan underlight from the river itself (rocks at the bank pick up
-        // the water's glow).
+        // Subtle cool underlight near the waterline — much fainter now
+        // that the river itself reads as clear glass rather than cyan.
         float nearWater = 1.0 - smoothstep(0.0, 3.0, vWorldPos.y);
-        col += vec3(0.030, 0.090, 0.130) * nearWater * 0.6;
+        col += vec3(0.018, 0.035, 0.050) * nearWater * 0.4;
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -463,14 +467,19 @@ export default function BiolumeRiver() {
   const boulderGeom = useMemo(() => buildRockGeometry(1.7, 0.32), []);
   const midRockGeom = useMemo(() => buildRockGeometry(4.3, 0.22), []);
   const pebbleGeom = useMemo(() => buildRockGeometry(9.1, 0.14), []);
+  // Shore pebbles: tiny, smoother, packed densely right at the waterline
+  // to break up the geometric edge of the river plane.
+  const shoreGeom = useMemo(() => buildRockGeometry(13.7, 0.10), []);
   const rockMat = useMemo(() => buildRockMaterial(), []);
   const boulderRef = useRef<InstancedMesh>(null);
   const midRockRef = useRef<InstancedMesh>(null);
   const pebbleRef = useRef<InstancedMesh>(null);
+  const shoreRef = useRef<InstancedMesh>(null);
 
-  const BOULDER_COUNT = 70;
-  const MID_ROCK_COUNT = 220;
-  const PEBBLE_COUNT = 700;
+  const BOULDER_COUNT = 500;
+  const MID_ROCK_COUNT = 300;
+  const PEBBLE_COUNT = 2000;
+  const SHORE_COUNT = 4000;
 
   useEffect(() => {
     const classes: Array<{
@@ -485,53 +494,73 @@ export default function BiolumeRiver() {
       // Per-instance tint range — RGB multiplier, slight color variation.
       tints: Array<[number, number, number]>;
     }> = [
-      {
-        mesh: boulderRef.current,
-        geom: boulderGeom,
-        count: BOULDER_COUNT,
-        scaleMin: 0.9,
-        scaleMax: 1.8,
-        offsetMin: 7.0,
-        offsetMax: 12.0,
-        sink: 0.45,
-        tints: [
-          [1.05, 1.0, 0.92], // warm gray
-          [0.92, 0.95, 1.05], // cool gray
-          [1.0, 0.92, 0.82], // sandstone
-        ],
-      },
-      {
-        mesh: midRockRef.current,
-        geom: midRockGeom,
-        count: MID_ROCK_COUNT,
-        scaleMin: 0.35,
-        scaleMax: 0.75,
-        offsetMin: 5.8,
-        offsetMax: 10.5,
-        sink: 0.20,
-        tints: [
-          [1.0, 1.0, 1.0],
-          [0.95, 0.92, 0.88],
-          [0.88, 0.92, 1.0],
-        ],
-      },
-      {
-        mesh: pebbleRef.current,
-        geom: pebbleGeom,
-        count: PEBBLE_COUNT,
-        scaleMin: 0.08,
-        scaleMax: 0.22,
-        offsetMin: 5.3,
-        offsetMax: 9.5,
-        sink: 0.06,
-        tints: [
-          [1.0, 0.98, 0.94],
-          [0.85, 0.90, 1.05],
-          [1.05, 0.95, 0.85],
-          [0.95, 0.95, 0.95],
-        ],
-      },
-    ];
+        {
+          mesh: boulderRef.current,
+          geom: boulderGeom,
+          count: BOULDER_COUNT,
+          scaleMin: 0.9,
+          scaleMax: 1.8,
+          offsetMin: 7.0,
+          offsetMax: 12.0,
+          sink: 0.45,
+          tints: [
+            [1.05, 1.0, 0.92], // warm gray
+            [0.92, 0.95, 1.05], // cool gray
+            [1.0, 0.92, 0.82], // sandstone
+          ],
+        },
+        {
+          mesh: midRockRef.current,
+          geom: midRockGeom,
+          count: MID_ROCK_COUNT,
+          scaleMin: 0.35,
+          scaleMax: 0.75,
+          offsetMin: 5.8,
+          offsetMax: 10.5,
+          sink: 0.20,
+          tints: [
+            [1.0, 1.0, 1.0],
+            [0.95, 0.92, 0.88],
+            [0.88, 0.92, 1.0],
+          ],
+        },
+        {
+          mesh: pebbleRef.current,
+          geom: pebbleGeom,
+          count: PEBBLE_COUNT,
+          scaleMin: 0.08,
+          scaleMax: 0.22,
+          offsetMin: 5.3,
+          offsetMax: 9.5,
+          sink: 0.06,
+          tints: [
+            [1.0, 0.98, 0.94],
+            [0.85, 0.90, 1.05],
+            [1.05, 0.95, 0.85],
+            [0.95, 0.95, 0.95],
+          ],
+        },
+        // Shore pebbles: very small, hugging the waterline (offset starts
+        // INSIDE the river's nominal half-width so they interleave with
+        // the edge — breaking the straight geometric boundary).
+        {
+          mesh: shoreRef.current,
+          geom: shoreGeom,
+          count: SHORE_COUNT,
+          scaleMin: 0.04,
+          scaleMax: 0.13,
+          offsetMin: 4.6,
+          offsetMax: 6.4,
+          sink: 0.02,
+          tints: [
+            [1.0, 0.97, 0.92],
+            [0.88, 0.92, 1.02],
+            [1.04, 0.96, 0.86],
+            [0.94, 0.94, 0.96],
+            [0.82, 0.86, 0.92],
+          ],
+        },
+      ];
 
     const m = new Matrix4();
     const pos = new Vector3();
@@ -588,7 +617,7 @@ export default function BiolumeRiver() {
       cls.geom.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 1));
       cls.geom.setAttribute('aTint', new InstancedBufferAttribute(tints, 3));
     }
-  }, [boulderGeom, midRockGeom, pebbleGeom]);
+  }, [boulderGeom, midRockGeom, pebbleGeom, shoreGeom]);
 
   useFrame((state) => {
     const s = useAppStore.getState().scrollProgress;
@@ -609,10 +638,12 @@ export default function BiolumeRiver() {
 
   return (
     <group ref={groupRef}>
-      {/* Darker mud/wet-earth basin under the river */}
+      {/* Darker mud/wet-earth basin under the river. Color softened so the
+          basin blends into the main ground plane (no harsh band visible
+          beyond the riverbank rocks). */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.10, RIVER_Z]}>
         <planeGeometry args={[200, 22]} />
-        <meshBasicMaterial color="#040a0c" toneMapped={false} />
+        <meshBasicMaterial color="#0a1622" toneMapped={false} fog />
       </mesh>
       <mesh geometry={geometry} material={material} frustumCulled={false} />
       {/* Riverbank rocks: boulders, mid rocks, pebbles */}
@@ -629,6 +660,11 @@ export default function BiolumeRiver() {
       <instancedMesh
         ref={pebbleRef}
         args={[pebbleGeom, rockMat, PEBBLE_COUNT]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={shoreRef}
+        args={[shoreGeom, rockMat, SHORE_COUNT]}
         frustumCulled={false}
       />
       {/* Riverbank point lights — cyan, low, lighting the forest's near

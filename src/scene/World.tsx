@@ -17,9 +17,9 @@ export default function World() {
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 1.5]}
       camera={{ position: [0, 15, 0], fov: 45, near: 0.05, far: 1000 }}
-      style={{ position: 'fixed', inset: 0, background: '#000' }}
+      style={{ position: 'fixed', inset: 0, background: '#0a1530' }}
     >
-      <color attach="background" args={['#000000']} />
+      <color attach="background" args={['#0a1530']} />
       <ambientLight intensity={0.15} />
       <Suspense fallback={null}>
         <CameraRig />

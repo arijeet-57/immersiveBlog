@@ -352,11 +352,13 @@ function buildPineMaterial(): ShaderMaterial {
         col += riverLightContribution(vWorldPos, vWorldNormal) * 0.35;
 
         // Manual fog so distant trunks dissolve into the luminous blue
-        // haze (custom ShaderMaterial doesn't receive scene fog).
+        // haze (custom ShaderMaterial doesn't receive scene fog). Trunks
+        // hold onto their dark bark longer — fog starts further out and
+        // tops out at ~45% so trees never fully wash to blue.
         float fogDist = length(cameraPosition - vWorldPos);
-        float fogFactor = clamp((fogDist - 30.0) / (320.0 - 30.0), 0.0, 1.0);
+        float fogFactor = clamp((fogDist - 70.0) / (340.0 - 70.0), 0.0, 1.0);
         vec3 fogCol = vec3(0.290, 0.471, 0.690);
-        col = mix(col, fogCol, fogFactor);
+        col = mix(col, fogCol, fogFactor * 0.45);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
