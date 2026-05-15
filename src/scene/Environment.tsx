@@ -1,21 +1,146 @@
-import { Stars } from '@react-three/drei';
+import { useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { BufferGeometry, Float32BufferAttribute, ShaderMaterial, AdditiveBlending } from 'three';
+import { Stars, Clouds, Cloud } from '@react-three/drei';
+import * as THREE from 'three';
+import Butterfly from './Butterfly';
+
+// Control the mist, clouds, and fog volume and thickness across the environment (0 to 100)
+export const MIST_PERCENTAGE = 100;
+export const CLOUD_PERCENTAGE = 100;
+export const FOG_PERCENTAGE = 10;
+export const FOREST_SMOG_PERCENTAGE = 10;
+export const MOON_GLOW_PERCENTAGE = 450;
+
+const MIST_COUNT = Math.floor(150 * (MIST_PERCENTAGE / 100));
+
+function AmbientMist() {
+  const geometry = useMemo(() => {
+    const g = new BufferGeometry();
+    const positions = new Float32Array(MIST_COUNT * 3);
+    const seeds = new Float32Array(MIST_COUNT * 3);
+    for (let i = 0; i < MIST_COUNT; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 600; // Wide X spread
+      positions[i * 3 + 1] = Math.random() * 12; // Near ground to medium height
+      positions[i * 3 + 2] = 50 - Math.random() * 500; // Z depth
+      seeds[i * 3] = Math.random();
+      seeds[i * 3 + 1] = Math.random();
+      seeds[i * 3 + 2] = Math.random();
+    }
+    g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    g.setAttribute('aSeed', new Float32BufferAttribute(seeds, 3));
+    return g;
+  }, []);
+
+  const material = useMemo(
+    () =>
+      new ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uMistIntensity: { value: MIST_PERCENTAGE / 100.0 },
+        },
+        vertexShader: /* glsl */ `
+          attribute vec3 aSeed;
+          uniform float uTime;
+          uniform float uMistIntensity;
+          varying float vAlpha;
+
+          void main() {
+            vec3 p = position;
+            // Drifting mist
+            p.x += sin(uTime * 0.1 + aSeed.x * 6.28) * 15.0 + (uTime * 3.0 * aSeed.y);
+            // Wrap around X so mist continuously flows
+            p.x = mod(p.x + 300.0, 600.0) - 300.0;
+            
+            p.y += sin(uTime * 0.05 + aSeed.y * 6.28) * 2.0;
+            p.z += cos(uTime * 0.08 + aSeed.z * 6.28) * 5.0;
+            
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            gl_Position = projectionMatrix * mv;
+            // HUGE soft particles for mist patches
+            gl_PointSize = (2000.0 + aSeed.z * 1500.0) / -mv.z;
+            
+            // Pulsing opacity scaled by the percentage constant
+            vAlpha = (0.01 + 0.03 * sin(uTime * 0.2 + aSeed.x * 6.28)) * uMistIntensity;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          varying float vAlpha;
+          void main() {
+            vec2 d = gl_PointCoord - 0.5;
+            float dist = length(d);
+            if (dist > 0.5) discard;
+            // Soft fluffy sphere falloff
+            float intensity = smoothstep(0.5, 0.0, dist);
+            intensity = pow(intensity, 1.5); // Thicken center slightly
+            
+            vec3 mistColor = vec3(0.35, 0.55, 0.85); // Magical blue
+            gl_FragColor = vec4(mistColor * intensity * vAlpha, intensity * vAlpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        toneMapped: false,
+      }),
+    []
+  );
+
+  useFrame((state) => {
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+  });
+
+  return <points geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+function SkyClouds() {
+  if (CLOUD_PERCENTAGE <= 0) return null;
+  const cloudCount = Math.floor(10 * (CLOUD_PERCENTAGE / 100));
+
+  return (
+    <Clouds material={THREE.MeshBasicMaterial}>
+      {Array.from({ length: cloudCount }).map((_, i) => (
+        <Cloud
+          key={i}
+          seed={i + 1}
+          position={[
+            (Math.random() - 0.5) * 400,
+            120 + Math.random() * 60,
+            -100 - Math.random() * 300,
+          ]}
+          volume={15}
+          color="#2a4b70"
+          opacity={0.3 * (CLOUD_PERCENTAGE / 100)}
+          speed={0.1}
+        />
+      ))}
+    </Clouds>
+  );
+}
 
 export default function Environment() {
+  // If fog is 0%, push it far away. If 100%, keep it dense and close.
+  const fogNear = 15 + (1.0 - (FOG_PERCENTAGE / 100)) * 500;
+  const fogFar = 250 + (1.0 - (FOG_PERCENTAGE / 100)) * 1000;
+
   return (
     <>
-      {/* Blue-hour atmospheric fog: a luminous mid-blue so the gaps
-          between distant trunks resolve to glowing haze rather than to
-          dark void. Tight near/far range keeps the haze dense. */}
-      <fog attach="fog" args={['#4a78b0', 30, 320]} />
-      {/* Fewer, fainter stars — blue hour washes most of them out. */}
+      {/* Blue-hour atmospheric fog */}
+      <fog attach="fog" args={['#4a78b0', fogNear, fogFar]} />
+      {/* Drifting Mist */}
+      <AmbientMist />
+      {/* Volumetric Clouds */}
+      <SkyClouds />
+      {/* Fewer, fainter stars */}
       <Stars radius={500} depth={80} count={900} factor={3} fade speed={0.4} />
+
       {/* Cool-blue tinted ground plane. Extended well past the fog's far
           plane (320) so the land reads as continuous all the way to the
           horizon and dissolves into haze — no visible plane-edge seam
           where the ground would otherwise stop and reveal the void. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} renderOrder={-1}>
         <planeGeometry args={[2000, 2000]} />
-        <meshBasicMaterial color="#0c1b2c" toneMapped={false} fog />
+        <meshBasicMaterial color="#0c1b2c" toneMapped={false} fog depthWrite={false} />
       </mesh>
     </>
   );

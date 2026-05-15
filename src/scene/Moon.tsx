@@ -6,6 +6,7 @@ import {
   ShaderMaterial,
 } from 'three';
 import { setSunMesh } from './sunRef';
+import { MOON_GLOW_PERCENTAGE } from './Environment';
 
 // Act IV — the moon dominates the final composition. The sphere itself
 // doubles as the GodRays "sun" mesh (registered via setSunMesh) so we
@@ -75,6 +76,11 @@ function buildMoonMaterial(): ShaderMaterial {
         // even with MeshBasic lighting model.
         float edge = pow(1.0 - clamp(vNormal.z, 0.0, 1.0), 2.5);
         col *= mix(1.0, 0.72, edge * 0.5);
+        
+        // Emissive multiplier: pushing values above 1.0 so the sphere itself
+        // is luminous and feeds heavily into the post-processing Bloom.
+        col *= 3.5;
+        
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -86,7 +92,9 @@ function buildMoonMaterial(): ShaderMaterial {
 // bloom pass and reads as a glow rather than a disc.
 function buildHaloMaterial(): ShaderMaterial {
   return new ShaderMaterial({
-    uniforms: {},
+    uniforms: {
+      uGlow: { value: MOON_GLOW_PERCENTAGE / 100.0 },
+    },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
       void main() {
@@ -96,16 +104,16 @@ function buildHaloMaterial(): ShaderMaterial {
     `,
     fragmentShader: /* glsl */ `
       varying vec2 vUv;
+      uniform float uGlow;
       void main() {
         float d = length(vUv - 0.5) * 2.0;
-        // Tight inner core fades to soft outer halo
-        // Halo confined tight to the disc so it can't extend visually
-        // past the moon and bleed around tree trunks in screen space.
-        float core = smoothstep(0.50, 0.20, d);
-        float outer = smoothstep(0.85, 0.40, d);
-        float a = max(core * 0.286, outer * 0.102);
-        vec3 col = mix(vec3(0.080, 0.165, 0.470), vec3(0.160, 0.245, 0.580), core);
-        gl_FragColor = vec4(col * a, a);
+        // Single smooth radial falloff to eliminate double-ring effect
+        float a = smoothstep(1.0, 0.0, d) * 0.15;
+        // Ice-blue glow color
+        vec3 col = vec3(0.160, 0.245, 0.580);
+        
+        // Scale opacity by the glow percentage uniform
+        gl_FragColor = vec4(col * a * uGlow, a * uGlow);
       }
     `,
     transparent: true,
@@ -134,9 +142,20 @@ export default function Moon() {
           camera and never disappears behind the sphere edge. */}
       <Billboard position={[MOON_POS[0], MOON_POS[1], MOON_POS[2] + 0.5]}>
         <mesh material={haloMat}>
-          <planeGeometry args={[MOON_RADIUS * 1.6, MOON_RADIUS * 1.6]} />
+          <planeGeometry 
+            args={[
+              MOON_RADIUS * 1.6 * Math.max(1, MOON_GLOW_PERCENTAGE / 100), 
+              MOON_RADIUS * 1.6 * Math.max(1, MOON_GLOW_PERCENTAGE / 100)
+            ]} 
+          />
         </mesh>
       </Billboard>
+      {/* Physical moonlight source for any Standard/Lambert materials */}
+      <directionalLight
+        position={MOON_POS}
+        intensity={1.5 * (MOON_GLOW_PERCENTAGE / 100)}
+        color="#8aa1ff"
+      />
     </>
   );
 }

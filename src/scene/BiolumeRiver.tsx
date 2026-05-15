@@ -620,10 +620,6 @@ export default function BiolumeRiver() {
   }, [boulderGeom, midRockGeom, pebbleGeom, shoreGeom]);
 
   useFrame((state) => {
-    const s = useAppStore.getState().scrollProgress;
-    const visible = s >= RIVER_VISIBLE_FROM && s <= RIVER_VISIBLE_TO;
-    if (groupRef.current) groupRef.current.visible = visible;
-    if (!visible) return;
     matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
     rockMat.uniforms.uTime.value = state.clock.elapsedTime;
   });

@@ -282,10 +282,6 @@ function Twigs() {
 
 export default function Foliage() {
   const groupRef = useRef<Group>(null);
-  useFrame(() => {
-    const s = useAppStore.getState().scrollProgress;
-    if (groupRef.current) groupRef.current.visible = s <= FOLIAGE_VISIBLE_TO;
-  });
   return (
     <group ref={groupRef}>
       <Twigs />

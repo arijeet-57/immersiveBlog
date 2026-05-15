@@ -10,6 +10,8 @@ import BiolumeRiver from './BiolumeRiver';
 import DarkForest from './DarkForest';
 import Valley from './Valley';
 import Moon from './Moon';
+import Butterfly from './Butterfly';
+import ButterflyTrail from './ButterflyTrail';
 
 export default function World() {
   return (
@@ -23,6 +25,11 @@ export default function World() {
       <ambientLight intensity={0.15} />
       <Suspense fallback={null}>
         <CameraRig />
+        
+        {/* POV Avatar + bioluminescent dust trail */}
+        <Butterfly interactive flapSpeed={12.0} scale={0.08} />
+        <ButterflyTrail />
+
         <Environment />
         <Foliage />
         <FlowerField />

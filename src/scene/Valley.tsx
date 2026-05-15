@@ -25,21 +25,25 @@ import { useAppStore } from '../store/appStore';
 // displaced plane; flowers and fireflies sample the same height function so
 // they sit on the terrain rather than floating.
 
-const VALLEY_Z_NEAR = -195;
+const VALLEY_Z_NEAR = -32;
 const VALLEY_Z_FAR = -440;
-const VALLEY_HALF_W = 110;
+const VALLEY_HALF_W = 120;
 const VALLEY_DEPTH = VALLEY_Z_NEAR - VALLEY_Z_FAR; // positive
+
+const FOREST_END_Z = -195;
+const VALLEY_PROPS_Z_NEAR = -195;
+const VALLEY_PROPS_DEPTH = VALLEY_PROPS_Z_NEAR - VALLEY_Z_FAR;
 
 // Counts tuned for steady 60fps. Instanced meshes are one draw call each but
 // the GPU still runs the vertex shader per-instance × per-vertex, so total
 // vertex throughput is the bottleneck, not draw-call count.
-const FLOWER_COUNT = 90000;
-const LAVENDER_COUNT = 20000;
-const GRASS_COUNT = 14000;
+const FLOWER_COUNT = 80000;
+const LAVENDER_COUNT = 10000;
+const GRASS_COUNT = 30000;
 const TWIG_COUNT = 900;
 const BUSH_COUNT = 2000;
 const LEAF_COUNT = 6000;
-const FIREFLY_COUNT = 1200;
+const FIREFLY_COUNT = 2000;
 
 // Shared hill height function — must match the shader displacement below so
 // scattered flowers/fireflies follow the terrain.
@@ -103,7 +107,17 @@ function hillHeight(x: number, z: number): number {
     knoll += k.h * Math.exp(-(kx * kx + kz * kz));
   }
 
-  return rolling + ridge + basin + basinHills + knoll;
+  // Flatten the terrain in the forest section so it serves as a smooth floor.
+  // z = -195 -> tZ = (-32 - (-195)) / 408 = 163 / 408 = 0.40
+  const tZ = (VALLEY_Z_NEAR - z) / VALLEY_DEPTH;
+  const mergeMask = smoothstep(0.40, 0.44, tZ);
+
+  return (rolling + ridge + basin + basinHills + knoll) * mergeMask;
+}
+
+function smoothstep(edge0: number, edge1: number, x: number) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 // --- Terrain ---------------------------------------------------------------
@@ -179,22 +193,85 @@ function buildTerrainMaterial(): ShaderMaterial {
     fragmentShader: /* glsl */ `
       varying vec3 vWorldPos;
       varying vec3 vNormal;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+      // 3D Value Noise for FBM
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + .1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(in vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                       mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                       mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+      }
+
+      float fbm(vec3 x) {
+        float v = 0.0;
+        float a = 0.5;
+        vec3 shift = vec3(100.0);
+        for (int i = 0; i < 4; ++i) {
+          v += a * noise(x);
+          x = x * 2.0 + shift;
+          a *= 0.5;
+        }
+        return v;
+      }
+
       void main() {
-        // Dark mossy basin with subtle blue-grey moonlit highs.
-        vec3 low  = vec3(0.025, 0.060, 0.040);
-        vec3 high = vec3(0.060, 0.110, 0.090);
-        float n = hash(floor(vWorldPos.xz * 1.7));
-        vec3 col = mix(low, high, n * 0.6);
+        // --- UNIFIED GROUND TEXTURE ---
+        // Authentic 3D FBM for highly organic patches
+        vec3 p = vWorldPos * 0.4;
+        
+        float coarse = fbm(p * 0.5);
+        float mid    = fbm(p * 2.5);
+        float fine   = fbm(p * 8.0);
+        
+        vec3 dirt    = vec3(0.030, 0.022, 0.014);
+        vec3 humus   = vec3(0.055, 0.038, 0.020);
+        vec3 needle  = vec3(0.065, 0.045, 0.025);
+        vec3 moss    = vec3(0.035, 0.050, 0.025);
+        vec3 leaf    = vec3(0.080, 0.050, 0.030);
+        
+        float needleMask = smoothstep(0.4, 0.7, coarse + mid * 0.5);
+        float mossMask   = smoothstep(0.6, 0.9, mid + fine * 0.3) * smoothstep(0.3, 0.5, coarse);
+        float leafMask   = smoothstep(0.7, 0.9, fine) * (1.0 - mossMask);
+        
+        vec3 col = mix(dirt, humus, smoothstep(0.35, 0.7, coarse));
+        col = mix(col, needle, smoothstep(0.55, 0.85, needleMask) * 0.7);
+        col = mix(col, moss, mossMask * 0.85);
+        col = mix(col, leaf, leafMask * 0.5);
+        
+        // Dappled shading + heavy darkening for the moonless forest floor.
+        col *= mix(0.4, 0.85, mid);
+
+        // --- VALLEY HILLS MOONLIGHT ---
         // Slopes catch cool moonlight on north/up faces.
         float up = clamp(vNormal.y, 0.0, 1.0);
         col = mix(col, vec3(0.075, 0.115, 0.150), pow(up, 1.6) * 0.35);
-        // Cool rim on side-facing slopes.
         float side = clamp(1.0 - vNormal.y, 0.0, 1.0);
         col += vec3(0.020, 0.040, 0.075) * side * 0.4;
+        
         // Distance dim so the far valley fades softly into the sky.
-        float depth = smoothstep(-200.0, -430.0, vWorldPos.z);
-        col *= mix(1.0, 0.55, depth);
+        float depthFade = smoothstep(-200.0, -430.0, vWorldPos.z);
+        col *= mix(1.0, 0.55, depthFade);
+
+        // --- RIVER TRANSITION ---
+        // Smoothly blend color to match the Biolume River bank at the near edge
+        vec3 riverColor = vec3(0.015, 0.025, 0.020);
+        float toRiver = smoothstep(-45.0, -32.0, vWorldPos.z);
+        col = mix(col, riverColor, toRiver);
+
+        // --- ATMOSPHERIC FOG ---
+        float fogDist = length(cameraPosition - vWorldPos);
+        float fogFactor = smoothstep(30.0, 320.0, fogDist);
+        col = mix(col, vec3(0.047, 0.106, 0.173), fogFactor); // #0c1b2c
+
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -947,7 +1024,7 @@ export default function Valley() {
     const seeds = new Float32Array(FIREFLY_COUNT * 3);
     for (let i = 0; i < FIREFLY_COUNT; i++) {
       const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
-      const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+      const z = VALLEY_PROPS_Z_NEAR - Math.random() * VALLEY_PROPS_DEPTH;
       const ground = hillHeight(x, z);
       // Hover just above the flower heads (hepatica ~1.0, lavender ~1.3),
       // with a shallow vertical band so the swarm reads as a layer over the
@@ -976,7 +1053,7 @@ export default function Valley() {
 
     // Jittered grid scatter across the valley footprint.
     const aspectX = VALLEY_HALF_W * 2;
-    const aspectZ = VALLEY_DEPTH;
+    const aspectZ = VALLEY_PROPS_DEPTH;
     const cell = Math.sqrt((aspectX * aspectZ) / (FLOWER_COUNT * 1.2));
     const gridX = Math.ceil(aspectX / cell);
     const gridZ = Math.ceil(aspectZ / cell);
@@ -996,7 +1073,7 @@ export default function Valley() {
       const gx = idx % gridX;
       const gz = Math.floor(idx / gridX);
       const x = -VALLEY_HALF_W + (gx + 0.5) * cell + (Math.random() - 0.5) * cell * 0.75;
-      const z = VALLEY_Z_NEAR - (gz + 0.5) * cell + (Math.random() - 0.5) * cell * 0.75;
+      const z = VALLEY_PROPS_Z_NEAR - (gz + 0.5) * cell + (Math.random() - 0.5) * cell * 0.75;
       const y = hillHeight(x, z);
       pos.set(x, y, z);
       const pitch = (Math.random() - 0.5) * 0.30;
@@ -1040,7 +1117,7 @@ export default function Valley() {
     for (let i = 0; i < PATCH_COUNT; i++) {
       patches.push({
         x: (Math.random() - 0.5) * VALLEY_HALF_W * 1.7,
-        z: VALLEY_Z_NEAR - 25 - Math.random() * (VALLEY_DEPTH - 40),
+        z: VALLEY_PROPS_Z_NEAR - 25 - Math.random() * (VALLEY_PROPS_DEPTH - 40),
         r: 10 + Math.random() * 18,
       });
     }
@@ -1055,7 +1132,7 @@ export default function Valley() {
       const x = patch.x + Math.cos(ang) * rad;
       const z = patch.z + Math.sin(ang) * rad;
       if (Math.abs(x) > VALLEY_HALF_W - 2) continue;
-      if (z > VALLEY_Z_NEAR || z < VALLEY_Z_FAR) continue;
+      if (z > VALLEY_PROPS_Z_NEAR || z < VALLEY_Z_FAR) continue;
       const y = hillHeight(x, z);
       pos.set(x, y, z);
       const pitch = (Math.random() - 0.5) * 0.18;
@@ -1095,7 +1172,7 @@ export default function Valley() {
     const grassSeeds = new Float32Array(GRASS_COUNT);
     for (let i = 0; i < GRASS_COUNT; i++) {
       const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
-      const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+      const z = VALLEY_PROPS_Z_NEAR - Math.random() * VALLEY_PROPS_DEPTH;
       const y = hillHeight(x, z);
       pos.set(x, y, z);
       const pitch = (Math.random() - 0.5) * 0.22;
@@ -1115,7 +1192,7 @@ export default function Valley() {
 
     for (let i = 0; i < TWIG_COUNT; i++) {
       const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
-      const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+      const z = VALLEY_PROPS_Z_NEAR - Math.random() * VALLEY_PROPS_DEPTH;
       const y = hillHeight(x, z);
       // Twigs lie almost flat on the ground with a small tilt.
       pos.set(x, y + 0.005, z);
@@ -1139,7 +1216,7 @@ export default function Valley() {
       let placedBush = 0;
       for (let i = 0; i < BUSH_COUNT * 2 && placedBush < BUSH_COUNT; i++) {
         const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
-        const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+        const z = VALLEY_PROPS_Z_NEAR - Math.random() * VALLEY_PROPS_DEPTH;
         const y = hillHeight(x, z);
         // Reject the ridge crest (too steep / windswept for bushes)
         if (z > -210 && y > 10) continue;
@@ -1172,7 +1249,7 @@ export default function Valley() {
       ];
       for (let i = 0; i < LEAF_COUNT; i++) {
         const x = (Math.random() - 0.5) * VALLEY_HALF_W * 2;
-        const z = VALLEY_Z_NEAR - Math.random() * VALLEY_DEPTH;
+        const z = VALLEY_PROPS_Z_NEAR - Math.random() * VALLEY_PROPS_DEPTH;
         const y = hillHeight(x, z);
         pos.set(x, y + 0.008, z);
         // Leaves lie mostly flat: pitch ~ -π/2 ± small jitter
@@ -1198,10 +1275,6 @@ export default function Valley() {
   }, [grassGeom, bushGeom, leafGeom]);
 
   useFrame((state) => {
-    const s = useAppStore.getState().scrollProgress;
-    const visible = s >= VALLEY_VISIBLE_FROM;
-    if (groupRef.current) groupRef.current.visible = visible;
-    if (!visible) return;
     const t = state.clock.elapsedTime;
     flowerMat.uniforms.uTime.value = t;
     lavenderMat.uniforms.uTime.value = t;
@@ -1211,7 +1284,7 @@ export default function Valley() {
   });
 
   return (
-    <group ref={groupRef} visible={false}>
+    <group ref={groupRef}>
       <mesh
         geometry={terrainGeom}
         material={terrainMat}

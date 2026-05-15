@@ -477,10 +477,6 @@ export default function FlowerField() {
   }, [geometry]);
 
   useFrame((state, dt) => {
-    const s = useAppStore.getState().scrollProgress;
-    const visible = s <= FIELD_VISIBLE_TO;
-    if (groupRef.current) groupRef.current.visible = visible;
-    if (!visible) return;
     material.uniforms.uTime.value = state.clock.elapsedTime;
     const boosts = boostsRef.current;
     const positions = positionsRef.current;
@@ -498,7 +494,8 @@ export default function FlowerField() {
         const d2 = dx * dx + dz * dz;
         if (d2 < r2) {
           const k = 1 - d2 / r2;
-          const target = 0.5 * k;
+          // Increased from 0.5 to 4.0 so flowers glow brightly under the cursor
+          const target = 4.0 * k;
           if (boosts[i] < target) boosts[i] = target;
         }
       }

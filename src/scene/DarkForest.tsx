@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
+  AdditiveBlending,
+  NormalBlending,
   BufferGeometry,
   DoubleSide,
   Euler,
@@ -20,17 +22,18 @@ import {
   RIVER_LIGHT_RANGE,
   RIVER_LIGHT_COLOR,
 } from './riverLights';
+import { positionCurve } from './spline';
+import { FOREST_SMOG_PERCENTAGE } from './Environment';
 
 // Tall realistic-style conifers (pines). Each tree is a single merged mesh:
 // a tapered bark trunk plus a stack of progressively smaller needle cones.
 // The geometry is region-tagged via uv.x so a single shader can paint bark
 // vs needles for both surfaces in one draw call per InstancedMesh.
 
-const TREE_COUNT = 180;
-const GRASS_COUNT = 16000;
-const BUSH_COUNT = 650;
+const TREE_COUNT = 150;
+const GRASS_COUNT = 1000000;
+const BUSH_COUNT = 1000;
 const FERN_COUNT = 400;
-const MIST_COUNT = 80;
 
 // World range the forest covers. Starts just behind the river (z = -25),
 // ends where the moonlit valley begins (~z = -195).
@@ -38,7 +41,7 @@ const FOREST_Z_NEAR = -32;
 const FOREST_Z_FAR = -195;
 const FOREST_HALF_W = 70;
 
-const TRUNK_HEIGHT = 44.0;
+const TRUNK_HEIGHT = 35.0;
 const TRUNK_BASE_R = 0.62;
 const TRUNK_TIP_R = 0.12;
 const TRUNK_RINGS = 22;
@@ -350,15 +353,6 @@ function buildPineMaterial(): ShaderMaterial {
         }
         // Subtle cyan kick from the river — kept faint so trunks stay dark.
         col += riverLightContribution(vWorldPos, vWorldNormal) * 0.35;
-
-        // Manual fog so distant trunks dissolve into the luminous blue
-        // haze (custom ShaderMaterial doesn't receive scene fog). Trunks
-        // hold onto their dark bark longer — fog starts further out and
-        // tops out at ~45% so trees never fully wash to blue.
-        float fogDist = length(cameraPosition - vWorldPos);
-        float fogFactor = clamp((fogDist - 70.0) / (340.0 - 70.0), 0.0, 1.0);
-        vec3 fogCol = vec3(0.290, 0.471, 0.690);
-        col = mix(col, fogCol, fogFactor * 0.45);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -571,11 +565,6 @@ function buildBushMaterial(): ShaderMaterial {
         float side = clamp(1.0 - abs(vNormal.y), 0.0, 1.0);
         col += vec3(0.015, 0.028, 0.050) * side * 0.55;
 
-        // Blue-hour fog
-        float fogDist = length(cameraPosition - vWorldPos);
-        float fogFactor = clamp((fogDist - 30.0) / (320.0 - 30.0), 0.0, 1.0);
-        col = mix(col, vec3(0.290, 0.471, 0.690), fogFactor);
-
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -678,8 +667,25 @@ function buildFernMaterial(): ShaderMaterial {
 // Poisson-ish jittered grid distribution so trees don't clump but aren't
 // gridded either. Trees inside the camera corridor are rejected; density
 // soft-falls off near the corridor for a natural clearing.
+// Precompute the camera path so we can clear a corridor.
+const cameraPath: { x: number, z: number }[] = [];
+// Smaller step size to ensure the corridor check doesn't have gaps.
+for (let t = 0.45; t <= 0.85; t += 0.005) {
+  const pt = positionCurve.getPoint(t);
+  cameraPath.push({ x: pt.x, z: pt.z });
+}
+const CORRIDOR_RADIUS = 6.0;
+
 function sampleTrees(count: number): Array<{ x: number; z: number; rot: number; scale: number }> {
-  const out: Array<{ x: number; z: number; rot: number; scale: number }> = [];
+  // Pre-seed the exact trees that the camera is dodging!
+  // These are placed precisely in the camera's "former" path to justify the zig-zags.
+  const out: Array<{ x: number; z: number; rot: number; scale: number }> = [
+    { x: 2, z: -38, rot: 0.5, scale: 1.4 },    // Camera passes at x~8 (on the right)
+    { x: 12, z: -68, rot: 1.2, scale: 1.6 },   // Camera passes at x~1 (on the left)
+    { x: -11, z: -105, rot: 2.4, scale: 1.5 }, // Camera passes at x~1 (on the right)
+    { x: 13, z: -145, rot: 0.8, scale: 1.7 },  // Camera passes at x~3 (on the left)
+    { x: -7, z: -182, rot: 3.1, scale: 1.3 },  // Camera passes at x~-4 (on the right)
+  ];
   const aspectZ = FOREST_Z_NEAR - FOREST_Z_FAR; // positive
   const aspectX = FOREST_HALF_W * 2;
   const area = aspectX * aspectZ;
@@ -695,6 +701,18 @@ function sampleTrees(count: number): Array<{ x: number; z: number; rot: number; 
       const jz = (Math.random() - 0.5) * cell * 0.85;
       const x = cx + jx;
       const z = cz + jz;
+
+      let inCorridor = false;
+      for (const pt of cameraPath) {
+        const dx = pt.x - x;
+        const dz = pt.z - z;
+        if (dx * dx + dz * dz < CORRIDOR_RADIUS * CORRIDOR_RADIUS) {
+          inCorridor = true;
+          break;
+        }
+      }
+      if (inCorridor) continue;
+
       const rot = Math.random() * Math.PI * 2;
       const scale = 0.85 + Math.random() * 0.55; // ±height jitter
       out.push({ x, z, rot, scale });
@@ -703,153 +721,166 @@ function sampleTrees(count: number): Array<{ x: number; z: number; rot: number; 
   return out;
 }
 
-// Forest mist: large soft billboarded fbm-alpha quads scattered low in
-// the forest, drifting slowly. Catches the god ray volumetric color and
-// creates the heavy haze that fills the gaps between trunks.
-function buildMistMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
-    vertexShader: /* glsl */ `
-      attribute float aSeed;
-      uniform float uTime;
-      varying vec2 vUv;
-      varying float vSeed;
-      varying vec3 vWorldPos;
-      void main() {
-        vUv = uv;
-        vSeed = aSeed;
-        // Sprite-like billboard: extract camera-aligned basis from view matrix
-        // and rebuild the quad facing the camera.
-        vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
-        vec3 up    = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-        vec3 worldOrigin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-        // Get instance scale from the diagonal of the model-instance matrix
-        mat4 mi = modelMatrix * instanceMatrix;
-        float sx = length(vec3(mi[0]));
-        float sy = length(vec3(mi[1]));
-        vec3 wp = worldOrigin + right * position.x * sx + up * position.y * sy;
-        vWorldPos = wp;
-        gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      varying vec2 vUv;
-      varying float vSeed;
-      varying vec3 vWorldPos;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float vnoise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        float a = hash(i);
-        float b = hash(i + vec2(1.0, 0.0));
-        float c = hash(i + vec2(0.0, 1.0));
-        float d = hash(i + vec2(1.0, 1.0));
-        vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-      }
-      float fbm(vec2 p) {
-        float v = 0.0, amp = 0.5;
-        for (int i = 0; i < 5; i++) {
-          v += amp * vnoise(p);
-          p *= 2.05; amp *= 0.5;
-        }
-        return v;
-      }
-      void main() {
-        // Drifting noise so the mist breathes.
-        vec2 p = vUv * 2.5 + vec2(uTime * 0.03 + vSeed * 7.0, uTime * 0.02);
-        float n = fbm(p);
-        // Soft circular falloff so the quad reads as a wisp, not a rectangle.
-        float d = length(vUv - 0.5) * 2.0;
-        float circle = smoothstep(1.0, 0.25, d);
-        float a = smoothstep(0.35, 0.85, n) * circle * 0.42;
-        // Luminous blue-hour haze tint — matches the fog color so mist
-        // wisps read as denser pockets of the same atmosphere.
-        vec3 col = vec3(0.42, 0.58, 0.82);
-        gl_FragColor = vec4(col, a);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-  });
-}
-
-// Forest floor: needle litter + moss patches + leaf debris via fbm noise.
-function buildFloorMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
-    vertexShader: /* glsl */ `
-      varying vec3 vWorldPos;
-      void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      varying vec3 vWorldPos;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float vnoise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        float a = hash(i);
-        float b = hash(i + vec2(1.0, 0.0));
-        float c = hash(i + vec2(0.0, 1.0));
-        float d = hash(i + vec2(1.0, 1.0));
-        vec2 u = f * f * (3.0 - 2.0 * f);
-        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-      }
-      float fbm(vec2 p) {
-        float v = 0.0; float amp = 0.5;
-        for (int i = 0; i < 5; i++) {
-          v += amp * vnoise(p);
-          p *= 2.05; amp *= 0.5;
-        }
-        return v;
-      }
-      void main() {
-        vec2 uv = vWorldPos.xz;
-        // Three texture layers: dirt base, needle litter streaks, moss
-        // patches. Each picks its color from fbm-driven masks.
-        vec3 dirt    = vec3(0.030, 0.022, 0.014);
-        vec3 humus   = vec3(0.055, 0.038, 0.020);
-        vec3 needle  = vec3(0.045, 0.030, 0.012);
-        vec3 moss    = vec3(0.030, 0.085, 0.040);
-        vec3 leaf    = vec3(0.090, 0.060, 0.025);
-
-        float coarse = fbm(uv * 0.18);
-        float mid    = fbm(uv * 0.9 + 13.0);
-        float fine   = fbm(uv * 5.5);
-
-        vec3 col = mix(dirt, humus, smoothstep(0.35, 0.7, coarse));
-        // Needle streaks (anisotropic — stretched along z to suggest fallen needles)
-        float needleMask = fbm(vec2(uv.x * 6.0, uv.y * 1.4));
-        col = mix(col, needle, smoothstep(0.55, 0.85, needleMask) * 0.7);
-        // Moss patches (clumpy)
-        float mossMask = smoothstep(0.62, 0.82, fbm(uv * 0.45 + 7.0));
-        col = mix(col, moss, mossMask * 0.85);
-        // Leaf debris (small, sparse)
-        float leafMask = smoothstep(0.78, 0.88, fine);
-        col = mix(col, leaf, leafMask * 0.5);
-
-        // Dappled shading + heavy darkening for the moonless forest floor.
-        col *= mix(0.4, 0.85, mid);
-        // Blue-hour fog
-        float fogDist = length(cameraPosition - vWorldPos);
-        float fogFactor = clamp((fogDist - 30.0) / (320.0 - 30.0), 0.0, 1.0);
-        col = mix(col, vec3(0.290, 0.471, 0.690), fogFactor);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-    toneMapped: false,
-  });
-}
-
 // Scroll range during which the forest is visible.
-// Forest is on much earlier so distant trunks fade in through the fog
-// (25→280) rather than popping into existence as the camera arrives.
-const FOREST_VISIBLE_FROM = 0.18;
-const FOREST_VISIBLE_TO = 0.96;
+const FOREST_VISIBLE_FROM = 0.45;
+const FOREST_VISIBLE_TO = 0.95;
+
+const FIREFLY_COUNT = 100;
+
+function ForestFireflies() {
+  const geometry = useMemo(() => {
+    const g = new BufferGeometry();
+    const positions = new Float32Array(FIREFLY_COUNT * 3);
+    const seeds = new Float32Array(FIREFLY_COUNT * 3);
+    
+    // Distribute randomly through the forest
+    for (let i = 0; i < FIREFLY_COUNT; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * (FOREST_HALF_W * 2);
+      positions[i * 3 + 1] = 0.5 + Math.random() * 2.5; // Hovering above ground
+      positions[i * 3 + 2] = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+      seeds[i * 3] = Math.random();
+      seeds[i * 3 + 1] = Math.random();
+      seeds[i * 3 + 2] = Math.random();
+    }
+    g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    g.setAttribute('aSeed', new Float32BufferAttribute(seeds, 3));
+    return g;
+  }, []);
+
+  const material = useMemo(
+    () =>
+      new ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uSize: { value: 6.0 },
+        },
+        vertexShader: /* glsl */ `
+          attribute vec3 aSeed;
+          uniform float uTime;
+          uniform float uSize;
+          varying float vAlpha;
+
+          void main() {
+            vec3 p = position;
+            p.x += sin(uTime * 0.5 + aSeed.x * 6.2831) * 0.8;
+            p.y += sin(uTime * 0.4 + aSeed.y * 6.2831) * 0.4;
+            p.z += cos(uTime * 0.6 + aSeed.z * 6.2831) * 0.8;
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            gl_Position = projectionMatrix * mv;
+            gl_PointSize = uSize * (180.0 / -mv.z);
+            vAlpha = 0.45 + 0.55 * sin(uTime * 1.5 + aSeed.x * 6.2831);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          varying float vAlpha;
+          void main() {
+            vec2 d = gl_PointCoord - 0.5;
+            float dist = length(d);
+            if (dist > 0.5) discard;
+            float intensity = smoothstep(0.5, 0.0, dist);
+            // Greenish-gold for forest fireflies
+            vec3 color = vec3(0.65, 0.85, 0.35);
+            gl_FragColor = vec4(color * intensity * vAlpha, intensity * vAlpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        toneMapped: false,
+      }),
+    []
+  );
+
+  useFrame((state) => {
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+  });
+
+  return <points geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+function ForestSmog() {
+  if (FOREST_SMOG_PERCENTAGE <= 0) return null;
+  const count = Math.floor(120 * (FOREST_SMOG_PERCENTAGE / 100));
+
+  const geometry = useMemo(() => {
+    const g = new BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const seeds = new Float32Array(count * 3);
+    
+    // Distribute randomly inside the forest depth
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 50);
+      positions[i * 3 + 1] = Math.random() * 15; // Hovering lower to ground
+      positions[i * 3 + 2] = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+      seeds[i * 3] = Math.random();
+      seeds[i * 3 + 1] = Math.random();
+      seeds[i * 3 + 2] = Math.random();
+    }
+    g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    g.setAttribute('aSeed', new Float32BufferAttribute(seeds, 3));
+    return g;
+  }, [count]);
+
+  const material = useMemo(
+    () =>
+      new ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uSmogIntensity: { value: FOREST_SMOG_PERCENTAGE / 100.0 },
+        },
+        vertexShader: /* glsl */ `
+          attribute vec3 aSeed;
+          uniform float uTime;
+          uniform float uSmogIntensity;
+          varying float vAlpha;
+
+          void main() {
+            vec3 p = position;
+            // Drifting smog
+            p.x += sin(uTime * 0.1 + aSeed.x * 6.28) * 10.0 + (uTime * 1.5 * aSeed.y);
+            // Wrap X
+            float width = 200.0;
+            p.x = mod(p.x + width * 0.5, width) - width * 0.5;
+            
+            p.y += sin(uTime * 0.05 + aSeed.y * 6.28) * 2.0;
+            p.z += cos(uTime * 0.08 + aSeed.z * 6.28) * 5.0;
+            
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            gl_Position = projectionMatrix * mv;
+            gl_PointSize = (2000.0 + aSeed.z * 1500.0) / -mv.z;
+            
+            // Dense, dark pulsing opacity
+            vAlpha = (0.2 + 0.15 * sin(uTime * 0.1 + aSeed.x * 6.28)) * uSmogIntensity;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          varying float vAlpha;
+          void main() {
+            vec2 d = gl_PointCoord - 0.5;
+            float dist = length(d);
+            if (dist > 0.5) discard;
+            float intensity = smoothstep(0.5, 0.0, dist);
+            intensity = pow(intensity, 1.2); 
+            
+            // Very dark, smoggy charcoal blue/black color
+            vec3 smogColor = vec3(0.04, 0.06, 0.08);
+            gl_FragColor = vec4(smogColor, intensity * vAlpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: NormalBlending, // Normal blend because it darkens/obscures
+        toneMapped: false,
+      }),
+    []
+  );
+
+  useFrame((state) => {
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+  });
+
+  return <points geometry={geometry} material={material} frustumCulled={false} />;
+}
 
 export default function DarkForest() {
   const groupRef = useRef<Group>(null);
@@ -864,26 +895,7 @@ export default function DarkForest() {
   const bushMat = useMemo(() => buildBushMaterial(), []);
   const fernGeom = useMemo(() => buildFernGeometry(), []);
   const fernMat = useMemo(() => buildFernMaterial(), []);
-  const floorMat = useMemo(() => buildFloorMaterial(), []);
-  const mistMat = useMemo(() => buildMistMaterial(), []);
   const fernRef = useRef<InstancedMesh>(null);
-  const mistRef = useRef<InstancedMesh>(null);
-  const mistGeom = useMemo(() => {
-    const g = new BufferGeometry();
-    // Non-indexed quad (two triangles, six vertices) to avoid index-buffer plumbing.
-    const positions = new Float32Array([
-      -0.5, -0.5, 0,   0.5, -0.5, 0,   0.5, 0.5, 0,
-      -0.5, -0.5, 0,   0.5,  0.5, 0,  -0.5, 0.5, 0,
-    ]);
-    const uvs = new Float32Array([
-      0, 0,  1, 0,  1, 1,
-      0, 0,  1, 1,  0, 1,
-    ]);
-    g.setAttribute('position', new Float32BufferAttribute(positions, 3));
-    g.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
-    g.computeBoundingSphere();
-    return g;
-  }, []);
 
   useEffect(() => {
     const mesh = meshRef.current;
@@ -979,55 +991,18 @@ export default function DarkForest() {
       fmesh.instanceMatrix.needsUpdate = true;
       fernGeom.setAttribute('aSeed', new InstancedBufferAttribute(fernSeeds, 1));
     }
-
-    // Mist patches: large soft billboards scattered low through the forest.
-    const mmesh = mistRef.current;
-    if (mmesh) {
-      const mistSeeds = new Float32Array(MIST_COUNT);
-      for (let i = 0; i < MIST_COUNT; i++) {
-        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 40);
-        const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
-        const y = 1.5 + Math.random() * 6.0;
-        pos.set(x, y, z);
-        e.set(0, 0, 0, 'YXZ');
-        q.setFromEuler(e);
-        const w = 14 + Math.random() * 22;
-        const h = 6 + Math.random() * 10;
-        scale.set(w, h, 1);
-        m.compose(pos, q, scale);
-        mmesh.setMatrixAt(i, m);
-        mistSeeds[i] = Math.random() * 10;
-      }
-      mmesh.count = MIST_COUNT;
-      mmesh.instanceMatrix.needsUpdate = true;
-      mistGeom.setAttribute('aSeed', new InstancedBufferAttribute(mistSeeds, 1));
-    }
-  }, [grassGeom, bushGeom, fernGeom, mistGeom]);
+  }, [grassGeom, bushGeom, fernGeom]);
 
   useFrame((state) => {
-    const s = useAppStore.getState().scrollProgress;
-    const visible = s >= FOREST_VISIBLE_FROM && s <= FOREST_VISIBLE_TO;
-    if (groupRef.current) groupRef.current.visible = visible;
-    if (!visible) return;
     const t = state.clock.elapsedTime;
     material.uniforms.uTime.value = t;
     grassMat.uniforms.uTime.value = t;
     bushMat.uniforms.uTime.value = t;
     fernMat.uniforms.uTime.value = t;
-    floorMat.uniforms.uTime.value = t;
-    mistMat.uniforms.uTime.value = t;
   });
 
   return (
-    <group ref={groupRef} visible={false}>
-      {/* Forest floor: needle litter / moss / leaf debris shader */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.001, (FOREST_Z_NEAR + FOREST_Z_FAR) / 2]}
-        material={floorMat}
-      >
-        <planeGeometry args={[FOREST_HALF_W * 2 + 40, FOREST_Z_NEAR - FOREST_Z_FAR]} />
-      </mesh>
+    <group ref={groupRef}>
       <instancedMesh
         ref={meshRef}
         args={[geometry, material, TREE_COUNT]}
@@ -1048,11 +1023,10 @@ export default function DarkForest() {
         args={[fernGeom, fernMat, FERN_COUNT]}
         frustumCulled={false}
       />
-      <instancedMesh
-        ref={mistRef}
-        args={[mistGeom, mistMat, MIST_COUNT]}
-        frustumCulled={false}
-      />
+      {/* Forest Fireflies */}
+      <ForestFireflies />
+      {/* Localized Dark Smog */}
+      <ForestSmog />
     </group>
   );
 }
