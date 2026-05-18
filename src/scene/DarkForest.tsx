@@ -264,7 +264,7 @@ function buildPineMaterial(): ShaderMaterial {
       }
       float fbm(vec2 p) {
         float v = 0.0; float amp = 0.5;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 3; i++) {
           v += amp * vnoise(p);
           p *= 2.07; amp *= 0.5;
         }
@@ -721,9 +721,11 @@ function sampleTrees(count: number): Array<{ x: number; z: number; rot: number; 
   return out;
 }
 
-// Scroll range during which the forest is visible.
-const FOREST_VISIBLE_FROM = 0.45;
-const FOREST_VISIBLE_TO = 0.95;
+// Scroll range during which the forest is visible. Begins early so the
+// forest is already in the scene (fully fogged out at distance) by the
+// time the camera approaches — no abrupt pop-in.
+const FOREST_VISIBLE_FROM = 0.22;
+const FOREST_VISIBLE_TO = 1.00;
 
 const FIREFLY_COUNT = 100;
 
@@ -882,10 +884,17 @@ function ForestSmog() {
   return <points geometry={geometry} material={material} frustumCulled={false} />;
 }
 
+// Number of z-strips to split the grass into for proximity culling.
+// Each strip gets its own InstancedMesh so it can be individually hidden
+// when behind the camera. Keeps all 1M blades but only renders 250-500K
+// near the camera at any scroll position.
+const GRASS_STRIPS = 4;
+const GRASS_PER_STRIP = Math.ceil(GRASS_COUNT / GRASS_STRIPS);
+
 export default function DarkForest() {
   const groupRef = useRef<Group>(null);
   const meshRef = useRef<InstancedMesh>(null);
-  const grassRef = useRef<InstancedMesh>(null);
+  const grassRefs = useRef<(InstancedMesh | null)[]>(Array(GRASS_STRIPS).fill(null));
   const bushRef = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => buildPineGeometry(), []);
   const material = useMemo(() => buildPineMaterial(), []);
@@ -896,6 +905,16 @@ export default function DarkForest() {
   const fernGeom = useMemo(() => buildFernGeometry(), []);
   const fernMat = useMemo(() => buildFernMaterial(), []);
   const fernRef = useRef<InstancedMesh>(null);
+
+  // Z-boundaries for each grass strip (evenly dividing forest depth)
+  const stripBounds = useMemo(() => {
+    const depth = FOREST_Z_NEAR - FOREST_Z_FAR;
+    const stripDepth = depth / GRASS_STRIPS;
+    return Array.from({ length: GRASS_STRIPS }, (_, i) => ({
+      zNear: FOREST_Z_NEAR - i * stripDepth,
+      zFar: FOREST_Z_NEAR - (i + 1) * stripDepth,
+    }));
+  }, []);
 
   useEffect(() => {
     const mesh = meshRef.current;
@@ -924,51 +943,58 @@ export default function DarkForest() {
     geometry.setAttribute('aSeed', new InstancedBufferAttribute(seeds, 1));
   }, [geometry]);
 
-  // Undergrowth: grass and broadleaf bushes.
+  // Undergrowth: grass (split into z-strips) and broadleaf bushes.
   useEffect(() => {
-    const gmesh = grassRef.current;
     const bmesh = bushRef.current;
-    if (!gmesh || !bmesh) return;
     const m = new Matrix4();
     const pos = new Vector3();
     const q = new Quaternion();
     const e = new Euler();
     const scale = new Vector3();
 
-    const grassSeeds = new Float32Array(GRASS_COUNT);
-    for (let i = 0; i < GRASS_COUNT; i++) {
-      const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 30);
-      const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
-      pos.set(x, 0, z);
-      const pitch = (Math.random() - 0.5) * 0.20;
-      const yaw = Math.random() * Math.PI * 2;
-      const roll = (Math.random() - 0.5) * 0.20;
-      e.set(pitch, yaw, roll, 'YXZ');
-      q.setFromEuler(e);
-      const s = 0.7 + Math.random() * 0.6;
-      scale.set(s, s * (0.85 + Math.random() * 0.35), s);
-      m.compose(pos, q, scale);
-      gmesh.setMatrixAt(i, m);
-      grassSeeds[i] = Math.random();
+    // Scatter grass across strips
+    for (let strip = 0; strip < GRASS_STRIPS; strip++) {
+      const gmesh = grassRefs.current[strip];
+      if (!gmesh) continue;
+      const { zNear, zFar } = stripBounds[strip];
+      const stripGrassSeeds = new Float32Array(GRASS_PER_STRIP);
+      for (let i = 0; i < GRASS_PER_STRIP; i++) {
+        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 30);
+        const z = zNear - Math.random() * (zNear - zFar);
+        pos.set(x, 0, z);
+        const pitch = (Math.random() - 0.5) * 0.20;
+        const yaw = Math.random() * Math.PI * 2;
+        const roll = (Math.random() - 0.5) * 0.20;
+        e.set(pitch, yaw, roll, 'YXZ');
+        q.setFromEuler(e);
+        const s = 0.7 + Math.random() * 0.6;
+        scale.set(s, s * (0.85 + Math.random() * 0.35), s);
+        m.compose(pos, q, scale);
+        gmesh.setMatrixAt(i, m);
+        stripGrassSeeds[i] = Math.random();
+      }
+      gmesh.count = GRASS_PER_STRIP;
+      gmesh.instanceMatrix.needsUpdate = true;
+      // Each strip needs its own geometry clone for the instanced attribute
+      gmesh.geometry.setAttribute('aSeed', new InstancedBufferAttribute(stripGrassSeeds, 1));
     }
-    gmesh.count = GRASS_COUNT;
-    gmesh.instanceMatrix.needsUpdate = true;
-    grassGeom.setAttribute('aSeed', new InstancedBufferAttribute(grassSeeds, 1));
 
-    for (let i = 0; i < BUSH_COUNT; i++) {
-      const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
-      const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
-      pos.set(x, 0, z);
-      const yaw = Math.random() * Math.PI * 2;
-      e.set(0, yaw, 0, 'YXZ');
-      q.setFromEuler(e);
-      const s = 0.8 + Math.random() * 0.9;
-      scale.set(s * (0.9 + Math.random() * 0.3), s * (0.7 + Math.random() * 0.5), s * (0.9 + Math.random() * 0.3));
-      m.compose(pos, q, scale);
-      bmesh.setMatrixAt(i, m);
+    if (bmesh) {
+      for (let i = 0; i < BUSH_COUNT; i++) {
+        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
+        const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+        pos.set(x, 0, z);
+        const yaw = Math.random() * Math.PI * 2;
+        e.set(0, yaw, 0, 'YXZ');
+        q.setFromEuler(e);
+        const s = 0.8 + Math.random() * 0.9;
+        scale.set(s * (0.9 + Math.random() * 0.3), s * (0.7 + Math.random() * 0.5), s * (0.9 + Math.random() * 0.3));
+        m.compose(pos, q, scale);
+        bmesh.setMatrixAt(i, m);
+      }
+      bmesh.count = BUSH_COUNT;
+      bmesh.instanceMatrix.needsUpdate = true;
     }
-    bmesh.count = BUSH_COUNT;
-    bmesh.instanceMatrix.needsUpdate = true;
 
     // Ferns scattered between bushes
     const fmesh = fernRef.current;
@@ -991,14 +1017,31 @@ export default function DarkForest() {
       fmesh.instanceMatrix.needsUpdate = true;
       fernGeom.setAttribute('aSeed', new InstancedBufferAttribute(fernSeeds, 1));
     }
-  }, [grassGeom, bushGeom, fernGeom]);
+  }, [grassGeom, bushGeom, fernGeom, stripBounds]);
 
   useFrame((state) => {
+    const scroll = useAppStore.getState().scrollProgress;
+    const vis = scroll >= FOREST_VISIBLE_FROM && scroll <= FOREST_VISIBLE_TO;
+    if (groupRef.current) groupRef.current.visible = vis;
+    if (!vis) return;
+
     const t = state.clock.elapsedTime;
     material.uniforms.uTime.value = t;
     grassMat.uniforms.uTime.value = t;
     bushMat.uniforms.uTime.value = t;
     fernMat.uniforms.uTime.value = t;
+
+    // Proximity-cull grass strips: only render strips near the camera's z
+    const camZ = state.camera.position.z;
+    const cullMargin = 50; // render strips within 50 units of camera z
+    for (let i = 0; i < GRASS_STRIPS; i++) {
+      const gmesh = grassRefs.current[i];
+      if (!gmesh) continue;
+      const { zNear, zFar } = stripBounds[i];
+      // Strip is visible if the camera z is within margin of the strip's range
+      const stripVisible = camZ - cullMargin < zNear && camZ + cullMargin > zFar;
+      gmesh.visible = stripVisible;
+    }
   });
 
   return (
@@ -1008,11 +1051,15 @@ export default function DarkForest() {
         args={[geometry, material, TREE_COUNT]}
         frustumCulled={false}
       />
-      <instancedMesh
-        ref={grassRef}
-        args={[grassGeom, grassMat, GRASS_COUNT]}
-        frustumCulled={false}
-      />
+      {/* Grass split into z-strips for proximity culling */}
+      {Array.from({ length: GRASS_STRIPS }, (_, i) => (
+        <instancedMesh
+          key={`grass-strip-${i}`}
+          ref={(el) => { grassRefs.current[i] = el; }}
+          args={[grassGeom, grassMat, GRASS_PER_STRIP]}
+          frustumCulled={false}
+        />
+      ))}
       <instancedMesh
         ref={bushRef}
         args={[bushGeom, bushMat, BUSH_COUNT]}

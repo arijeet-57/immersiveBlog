@@ -136,7 +136,7 @@ export default function Moon() {
         material={moonMat}
         renderOrder={-1}
       >
-        <sphereGeometry args={[MOON_RADIUS, 64, 64]} />
+        <sphereGeometry args={[MOON_RADIUS, 32, 32]} />
       </mesh>
       {/* Halo billboard — slightly in front of the moon so it always faces
           camera and never disappears behind the sphere edge. */}

@@ -16,7 +16,7 @@ import {
 } from 'three';
 import { useAppStore } from '../store/appStore';
 
-const FOLIAGE_VISIBLE_TO = 0.70;
+const FOLIAGE_VISIBLE_TO = 0.88;
 
 const FIELD_SIZE = 40;
 const GRASS_COUNT = 6000;
@@ -282,6 +282,13 @@ function Twigs() {
 
 export default function Foliage() {
   const groupRef = useRef<Group>(null);
+
+  useFrame(() => {
+    const scroll = useAppStore.getState().scrollProgress;
+    const vis = scroll <= FOLIAGE_VISIBLE_TO;
+    if (groupRef.current) groupRef.current.visible = vis;
+  });
+
   return (
     <group ref={groupRef}>
       <Twigs />

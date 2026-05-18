@@ -993,7 +993,7 @@ function buildValleyFireflyMaterial(): ShaderMaterial {
 // whole subtree is set to invisible so its vertex shaders don't run.
 // Valley is on while still in the forest so the ridge silhouette is
 // visible ahead through the mist rather than popping in at the crest.
-const VALLEY_VISIBLE_FROM = 0.50;
+const VALLEY_VISIBLE_FROM = 0.30;
 
 export default function Valley() {
   const groupRef = useRef<Group>(null);
@@ -1275,6 +1275,11 @@ export default function Valley() {
   }, [grassGeom, bushGeom, leafGeom]);
 
   useFrame((state) => {
+    const scroll = useAppStore.getState().scrollProgress;
+    const vis = scroll >= VALLEY_VISIBLE_FROM;
+    if (groupRef.current) groupRef.current.visible = vis;
+    if (!vis) return;
+
     const t = state.clock.elapsedTime;
     flowerMat.uniforms.uTime.value = t;
     lavenderMat.uniforms.uTime.value = t;

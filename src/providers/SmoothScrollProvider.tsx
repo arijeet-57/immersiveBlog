@@ -9,13 +9,13 @@ export default function SmoothScrollProvider({ children }: { children: ReactNode
 
   useEffect(() => {
     const lenis = new Lenis({
-      duration: 1.6,
+      duration: 2.0,
       smoothWheel: true,
       // Heavier wheel-to-scroll ratio so a single notch advances less of
       // the page. Combined with the longer page spacer, panels get more
       // dwell time on screen.
-      wheelMultiplier: 0.7,
-      touchMultiplier: 0.8,
+      wheelMultiplier: 0.6,
+      touchMultiplier: 0.7,
     });
     lenisRef.current = lenis;
     setLenis(lenis);

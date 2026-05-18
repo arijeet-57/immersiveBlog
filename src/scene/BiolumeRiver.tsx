@@ -15,8 +15,8 @@ import {
 } from 'three';
 import { useAppStore } from '../store/appStore';
 
-const RIVER_VISIBLE_FROM = 0.10;
-const RIVER_VISIBLE_TO = 0.82;
+const RIVER_VISIBLE_FROM = 0.00;
+const RIVER_VISIBLE_TO = 0.90;
 import {
   riverCurve,
   riverLightPositions,
@@ -131,7 +131,7 @@ function buildRiverMaterial(): ShaderMaterial {
       }
       float fbm(vec2 p) {
         float v = 0.0; float amp = 0.5;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 4; i++) {
           v += amp * vnoise(p);
           p = p * 2.07 + vec2(3.7, 1.9);
           amp *= 0.5;
@@ -620,6 +620,11 @@ export default function BiolumeRiver() {
   }, [boulderGeom, midRockGeom, pebbleGeom, shoreGeom]);
 
   useFrame((state) => {
+    const scroll = useAppStore.getState().scrollProgress;
+    const vis = scroll >= RIVER_VISIBLE_FROM && scroll <= RIVER_VISIBLE_TO;
+    if (groupRef.current) groupRef.current.visible = vis;
+    if (!vis) return;
+
     matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
     rockMat.uniforms.uTime.value = state.clock.elapsedTime;
   });

@@ -6,7 +6,9 @@ import * as THREE from 'three';
 import Butterfly from './Butterfly';
 
 // Control the mist, clouds, and fog volume and thickness across the environment (0 to 100)
-export const MIST_PERCENTAGE = 100;
+// Mist is kept light — just enough to cloak distant geometry so it fades in
+// gracefully as the camera approaches, masking any first-render hitches.
+export const MIST_PERCENTAGE = 35;
 export const CLOUD_PERCENTAGE = 100;
 export const FOG_PERCENTAGE = 10;
 export const FOREST_SMOG_PERCENTAGE = 10;
@@ -119,14 +121,20 @@ function SkyClouds() {
 }
 
 export default function Environment() {
-  // If fog is 0%, push it far away. If 100%, keep it dense and close.
-  const fogNear = 15 + (1.0 - (FOG_PERCENTAGE / 100)) * 500;
-  const fogFar = 250 + (1.0 - (FOG_PERCENTAGE / 100)) * 1000;
+  // Light "cloak" fog: near objects (under ~40 units) render fully clear,
+  // distant geometry fades gracefully into the haze and reveals as the
+  // camera approaches. Linear three.js fog already does the proximity
+  // reveal automatically — we just pick a moderate near/far so nothing
+  // ever pops in at the edge of view.
+  const fogNear = 40;
+  const fogFar  = 180;
 
   return (
     <>
-      {/* Blue-hour atmospheric fog */}
-      <fog attach="fog" args={['#4a78b0', fogNear, fogFar]} />
+      {/* Atmospheric cloak fog — matches the canvas clear color so the
+          ground plane dissolves into the sky at the horizon with no
+          visible seam. */}
+      <fog attach="fog" args={['#0a1530', fogNear, fogFar]} />
       {/* Drifting Mist */}
       <AmbientMist />
       {/* Volumetric Clouds */}

@@ -11,7 +11,7 @@ import {
 
 const tmpPos = new Vector3();
 const tmpLook = new Vector3();
-const LERP_60 = 0.08;
+const LERP_60 = 0.12;
 
 export default function CameraRig() {
   const { camera } = useThree();

@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useAppStore } from '../store/appStore';
-import { butterflyWorldPos, butterflyVelocity } from './butterflyRef';
+import { butterflyWorldPos, butterflyVelocity, butterflyVisibility } from './butterflyRef';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Module-level temp objects — zero per-frame allocations
@@ -29,12 +29,18 @@ interface BehaviorConfig {
   opacity: number;
 }
 
+// Flap speed is intentionally a constant across all stages — modulating it
+// with scroll progress made the wings appear to "speed up" during scroll
+// transitions. The calm idle rate (4.0) is what reads correctly on the home
+// page, so we keep that throughout.
+const FLAP_SPEED_CONSTANT = 12.0;
+
 const CONFIGS: [number, BehaviorConfig][] = [
-  [0.00, { forwardDist: 1.5, lateralAmp: 0.40, verticalAmp: 0.20, flapSpeed: 2.0, scaleMul: 1.00, glowBoost: 1.0, opacity: 1.0 }],
-  [0.25, { forwardDist: 1.0, lateralAmp: 0.25, verticalAmp: 0.15, flapSpeed: 3.0, scaleMul: 0.95, glowBoost: 1.3, opacity: 1.0 }],
-  [0.55, { forwardDist: 1.8, lateralAmp: 0.50, verticalAmp: 0.30, flapSpeed: 1.8, scaleMul: 1.05, glowBoost: 1.1, opacity: 1.0 }],
-  [0.80, { forwardDist: 2.2, lateralAmp: 0.35, verticalAmp: 0.15, flapSpeed: 1.5, scaleMul: 1.15, glowBoost: 0.8, opacity: 1.0 }],
-  [0.95, { forwardDist: 2.5, lateralAmp: 0.20, verticalAmp: 0.10, flapSpeed: 1.0, scaleMul: 1.20, glowBoost: 0.5, opacity: 0.3 }],
+  [0.00, { forwardDist: 1.5, lateralAmp: 0.85, verticalAmp: 0.45, flapSpeed: FLAP_SPEED_CONSTANT, scaleMul: 1.15, glowBoost: 1.0, opacity: 1.0 }],
+  [0.25, { forwardDist: 1.0, lateralAmp: 0.70, verticalAmp: 0.40, flapSpeed: FLAP_SPEED_CONSTANT, scaleMul: 1.10, glowBoost: 1.3, opacity: 1.0 }],
+  [0.55, { forwardDist: 1.8, lateralAmp: 0.95, verticalAmp: 0.55, flapSpeed: FLAP_SPEED_CONSTANT, scaleMul: 1.20, glowBoost: 1.1, opacity: 1.0 }],
+  [0.80, { forwardDist: 2.2, lateralAmp: 0.80, verticalAmp: 0.40, flapSpeed: FLAP_SPEED_CONSTANT, scaleMul: 1.30, glowBoost: 0.8, opacity: 1.0 }],
+  [0.95, { forwardDist: 2.5, lateralAmp: 0.60, verticalAmp: 0.30, flapSpeed: FLAP_SPEED_CONSTANT, scaleMul: 1.35, glowBoost: 0.5, opacity: 0.3 }],
 ];
 
 const _cfg: BehaviorConfig = { ...CONFIGS[0][1] };
@@ -134,20 +140,40 @@ function buildWingMaterial(): THREE.ShaderMaterial {
         float dx = p.x - pivotX;
         float distFromPivot = abs(dx);
 
-        // Organic flapping with wing-tip lag
-        float localTime = uTime * uFlapSpeed - distFromPivot * 1.4;
-        float flap = sin(localTime);
+        // ── Asymmetric flap waveform ──
+        // Real butterflies have a fast power downstroke and slower recovery
+        // upstroke. We bias a sine through a power curve and add a 2nd
+        // harmonic to flatten the top (mid-air pause) and steepen the bottom.
+        float localTime = uTime * uFlapSpeed - distFromPivot * 1.6;
+        float s1 = sin(localTime);
+        float s2 = sin(localTime * 2.0 + 0.4);
+        // Skew so down portion is steeper, top dwells slightly
+        float flap = s1 * 0.85 + s2 * 0.18;
+        // Soft clamp prevents the harmonics from over-extending the wing tip
+        flap = clamp(flap, -1.0, 1.0);
 
-        // 3D curvature during flap
-        float curve = pow(distFromPivot, 1.8) * 0.35 * flap;
+        // 3D curvature during flap — wing cups downward on power stroke,
+        // flattens on recovery (more flex on the downstroke).
+        float cupSign = step(0.0, -flap);                 // 1 on downstroke
+        float curve = pow(distFromPivot, 1.7)
+                    * (0.30 + 0.20 * cupSign) * flap;
         p.z += curve;
 
+        // ── Span-wise twist ──
+        // Tips lead the root through the stroke — a subtle twist along the
+        // wing span gives the wing a flexible, paper-like feel.
+        float twist = flap * 0.55 * pow(distFromPivot, 1.2);
+        float ty = uv.y - 0.5;             // distance from chord midline
+        p.z += ty * twist * 0.6;
+
         // Trailing-edge flutter (high-freq, small amp)
-        float flutter = sin(uTime * uFlapSpeed * 2.5 - distFromPivot * 3.0) * 0.02 * distFromPivot;
+        float flutter = sin(uTime * uFlapSpeed * 2.5 - distFromPivot * 3.2) * 0.022 * distFromPivot;
         p.z += flutter;
 
-        // Flap rotation about body axis
-        float angle = flap * 0.65 + 0.35;
+        // ── Flap rotation about body axis ──
+        // Asymmetric dihedral: stays slightly raised at rest (+0.30 bias),
+        // dips lower on downstroke than it raises on upstroke.
+        float angle = flap * 0.75 + 0.30;
         float c = cos(angle * aSide);
         float s = sin(angle * aSide);
         if (abs(p.x) > abs(pivotX)) {
@@ -257,7 +283,7 @@ function buildWingMaterial(): THREE.ShaderMaterial {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function buildBodyMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 1.0 } },
     vertexShader: /* glsl */ `
       varying vec3 vNormal;
       varying vec3 vViewDir;
@@ -275,20 +301,28 @@ function buildBodyMaterial(): THREE.ShaderMaterial {
       varying vec3 vViewDir;
       varying vec3 vLocalPos;
       uniform float uTime;
+      uniform float uOpacity;
       void main() {
-        vec3 col = vec3(0.015, 0.045, 0.12);
-        // Metallic fresnel sheen
-        float fresnel = pow(1.0 - max(dot(vNormal, vViewDir), 0.0), 4.0);
-        col += vec3(0.06, 0.18, 0.40) * fresnel;
-        // Bioluminescent dots along abdomen
+        // Nearly pure black body — only a whisper of midnight blue.
+        vec3 col = vec3(0.0008, 0.0015, 0.004);
+        // Very faint deep-blue rim — keeps silhouette readable, no shine
+        float fresnel = pow(1.0 - max(dot(vNormal, vViewDir), 0.0), 5.5);
+        col += vec3(0.010, 0.022, 0.055) * fresnel;
+        // Bioluminescent dots along abdomen — kept bright for contrast
         float segmentWave = sin(vLocalPos.y * 55.0 + uTime * 2.0) * 0.5 + 0.5;
         float dots = smoothstep(0.90, 0.97, segmentWave);
         float radial = smoothstep(0.045, 0.0, length(vLocalPos.xz));
         col += vec3(0.12, 0.55, 0.95) * dots * radial * 3.0;
-        gl_FragColor = vec4(col, 1.0);
+        gl_FragColor = vec4(col, uOpacity);
       }
     `,
     toneMapped: false,
+    transparent: true,
+    // Body parts (thorax, abdomen segments, head) overlap — with depthWrite
+    // off they z-fight and render out of order, causing the glitch. The body
+    // is effectively opaque (uOpacity = 1 except during the brief entrance
+    // fade), so writing depth here is safe and necessary.
+    depthWrite: true,
   });
 }
 
@@ -309,13 +343,10 @@ export default function Butterfly({
   flapSpeed = 12.0,
 }: ButterflyProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const targetOffsetRef = useRef(new THREE.Vector3());
   const localOffsetRef = useRef(new THREE.Vector3());
   const lAntennaRef = useRef<THREE.Group>(null);
   const rAntennaRef = useRef<THREE.Group>(null);
-
-  // Idle-detection state
-  const lastMouseRef  = useRef({ x: 0, y: 0 });
-  const lastMoveTime  = useRef(0);
   const smoothScaleRef = useRef(scale);
 
   const rightWingGeo = useMemo(() => buildWingGeometry('right'), []);
@@ -328,71 +359,125 @@ export default function Butterfly({
     const scroll = useAppStore.getState().scrollProgress;
     const cfg = lerpBehavior(scroll);
 
+    // ── Entrance fade ──
+    // Hidden on the home page (scroll ≈ 0); fades + flies in as the user
+    // begins scrolling. Fully present by scroll = 0.06.
+    const entrance = THREE.MathUtils.smoothstep(scroll, 0.005, 0.06);
+
+    if (groupRef.current) {
+      groupRef.current.visible = entrance > 0.001;
+    }
+    butterflyVisibility.value = entrance;
+
     // Update shader uniforms
     wingMat.uniforms.uTime.value = time;
     wingMat.uniforms.uFlapSpeed.value = cfg.flapSpeed;
     wingMat.uniforms.uGlowBoost.value = cfg.glowBoost;
-    wingMat.uniforms.uOpacity.value = cfg.opacity;
+    wingMat.uniforms.uOpacity.value = cfg.opacity * entrance;
     bodyMat.uniforms.uTime.value = time;
+    bodyMat.uniforms.uOpacity.value = entrance;
 
     // ── Animate antennae ──
+    // Antennae lag a bit behind body motion — driven by wingbeat phase plus
+    // their own slower sway, with a slight side-to-side asymmetry.
+    const wingPhase = time * cfg.flapSpeed;
+    const flapEnv   = Math.sin(wingPhase);
     if (lAntennaRef.current) {
-      lAntennaRef.current.rotation.z =  0.3 + Math.sin(time * 3.0 + 0.5) * 0.10;
-      lAntennaRef.current.rotation.x =        Math.sin(time * 2.2)       * 0.06;
+      lAntennaRef.current.rotation.z =  0.30 + Math.sin(time * 3.0 + 0.5) * 0.10 + flapEnv * 0.04;
+      lAntennaRef.current.rotation.x =         Math.sin(time * 2.2)       * 0.07 - flapEnv * 0.05;
     }
     if (rAntennaRef.current) {
-      rAntennaRef.current.rotation.z = -0.3 + Math.sin(time * 3.0 + 1.2) * 0.10;
-      rAntennaRef.current.rotation.x =        Math.sin(time * 2.2 + 0.8) * 0.06;
+      rAntennaRef.current.rotation.z = -0.30 + Math.sin(time * 3.0 + 1.2) * 0.10 - flapEnv * 0.04;
+      rAntennaRef.current.rotation.x =         Math.sin(time * 2.2 + 0.8) * 0.07 - flapEnv * 0.05;
     }
 
     if (interactive && groupRef.current) {
       const camera = state.camera;
-      const mouseX = state.pointer.x;
-      const mouseY = state.pointer.y;
-
-      // ── Idle detection ──
-      const mouseMoved =
-        Math.abs(mouseX - lastMouseRef.current.x) > 0.002 ||
-        Math.abs(mouseY - lastMouseRef.current.y) > 0.002;
-      if (mouseMoved) {
-        lastMouseRef.current.x = mouseX;
-        lastMouseRef.current.y = mouseY;
-        lastMoveTime.current = time;
-      }
-      const idleBlend = Math.min(1, Math.max(0, (time - lastMoveTime.current - 5) / 2));
-
-      // ── Wandering motion (subtle, so it feels alive even when cursor is still) ──
-      const wanderX = Math.sin(time * 0.8) * 0.06 + Math.cos(time * 1.3) * 0.04;
-      const wanderY = Math.cos(time * 0.6) * 0.04 + Math.sin(time * 1.7) * 0.02;
-
-      // ── Idle figure-8 ──
-      const idleX = Math.sin(time * 0.5) * 0.35;
-      const idleY = Math.sin(time * 1.0) * 0.15;
 
       // Calculate exact screen bounds at the butterfly's current depth
       const pCam = camera as THREE.PerspectiveCamera;
       const visibleHeightAtDepth = 2.0 * Math.tan((pCam.fov * Math.PI) / 360) * cfg.forwardDist;
       const visibleWidthAtDepth = visibleHeightAtDepth * state.viewport.aspect;
 
-      // ── Target: follow cursor exactly (1:1 mapping) ──
-      let targetX = (mouseX * visibleWidthAtDepth * 0.5) + wanderX;
-      let targetY = (mouseY * visibleHeightAtDepth * 0.5) + wanderY;
-      targetX = targetX * (1 - idleBlend) + idleX * idleBlend;
-      targetY = targetY * (1 - idleBlend) + idleY * idleBlend;
+      // ── Autonomous flight path: 3-axis lissajous with detuned harmonics ──
+      // Detuned (irrational-ratio) frequencies prevent the path from repeating.
+      // Per-axis "emphasis" envelopes rotate which axis dominates over ~20s
+      // cycles so the motion has changing character — lateral now, then
+      // mostly vertical, then a deep dive — rather than a constant blur.
+      const empX = 0.55 + 0.45 * Math.sin(time * 0.11);
+      const empY = 0.55 + 0.45 * Math.sin(time * 0.13 + 2.1);
+      const empZ = 0.55 + 0.45 * Math.sin(time * 0.09 + 4.2);
 
-      // ── Smooth lerp (ultra-fast snap for 1:1 responsiveness) ──
-      const alpha = 1 - Math.exp(-50.0 * dt);
+      // Layer 4 detuned sinusoids per axis — including a very slow large-amp
+      // term that wanders the butterfly to far-left / far-right of the screen
+      // over ~20s, plus a faster jittery component for "random" micro-motion.
+      const pathX = (
+        Math.sin(time * 0.19 + 0.4) * 0.90 +   // slow wide sweep — drags it edge to edge
+        Math.sin(time * 0.61) * 0.55 +
+        Math.sin(time * 1.43 + 1.1) * 0.35 +
+        Math.sin(time * 2.71 + 2.3) * 0.22 +   // jittery flutter
+        Math.sin(time * 3.97 + 0.8) * 0.12
+      ) * empX;
+      const pathY = (
+        Math.cos(time * 0.23 + 1.7) * 0.70 +   // slow vertical sweep
+        Math.cos(time * 0.83) * 0.50 +
+        Math.sin(time * 1.97 + 0.7) * 0.35 +
+        Math.cos(time * 0.31 + 1.8) * 0.22 +
+        Math.sin(time * 3.41 + 2.6) * 0.10     // jittery flutter
+      ) * empY;
+
+      // ── Depth excursion ──
+      // Slow swing periodically pulls the butterfly toward the camera, then
+      // pushes it back; tight bounds keep it from ever feeling distant.
+      const slowZ = Math.sin(time * 0.21 + 1.3);                 // -1 .. 1
+      const dipZ  = Math.pow(Math.max(0, slowZ), 2.0);            // dive toward camera
+      const farZ  = Math.pow(Math.max(0, -slowZ), 1.4);           // gentle pull back
+      const pathZ = (
+        -dipZ * 1.0          // near-camera dive (negative = toward viewer)
+        + farZ * 0.55        // far retreat — capped tight so it never feels distant
+        + Math.sin(time * 0.47 + 0.9) * 0.20
+        + Math.cos(time * 1.13 + 2.1) * 0.10
+      ) * empZ;
+
+      // Soft-saturate path values to ±1 so motion stays inside the screen
+      // bounds at this depth no matter how high the lissajous peaks get.
+      const satX = Math.tanh(pathX * 0.7);
+      const satY = Math.tanh(pathY * 0.7);
+      // Leave a 10% margin from the frustum edges so the wings never clip out.
+      const halfW = visibleWidthAtDepth * 0.45;
+      const halfH = visibleHeightAtDepth * 0.45;
+      const rawTargetX = satX * cfg.lateralAmp * halfW;
+      const rawTargetY = satY * cfg.verticalAmp * halfH;
+      // Depth offset, scaled by base forwardDist. Capped so it never recedes
+      // beyond ~1.6× base distance — keeps the butterfly always feeling near.
+      const rawTargetZ = THREE.MathUtils.clamp(
+        pathZ * cfg.forwardDist,
+        -cfg.forwardDist * 0.65,   // can come ~35% of forward dist toward camera
+         cfg.forwardDist * 0.6,    // can recede ~60% of forward dist back
+      );
+
+      // ── Smooth position & calculate jitter-free velocity ──
+      const lambdaPos = 3.0; // Lower lambda = heavier, smoother feel
+      const posAlpha = 1 - Math.exp(-lambdaPos * dt);
+      const rotAlpha = 1 - Math.exp(-4.0 * dt); // Very smooth rotation slerp
+
       const prevX = localOffsetRef.current.x;
       const prevY = localOffsetRef.current.y;
-      localOffsetRef.current.x += (targetX - localOffsetRef.current.x) * alpha;
-      localOffsetRef.current.y += (targetY - localOffsetRef.current.y) * alpha;
+      const prevZ = localOffsetRef.current.z;
+
+      // Directly smooth towards the mathematical path
+      localOffsetRef.current.x += (rawTargetX - prevX) * posAlpha;
+      localOffsetRef.current.y += (rawTargetY - prevY) * posAlpha;
+      localOffsetRef.current.z += (rawTargetZ - prevZ) * posAlpha;
 
       const curX = localOffsetRef.current.x;
       const curY = localOffsetRef.current.y;
+      const curZ = localOffsetRef.current.z;
 
-      // Velocity in screen-space for orientation
-      const velX = curX - prevX;
-      const velY = curY - prevY;
+      // Velocity via mathematical derivative — frame-rate independent
+      const velX = (rawTargetX - prevX) * lambdaPos;
+      const velY = (rawTargetY - prevY) * lambdaPos;
+      const velZ = (rawTargetZ - prevZ) * lambdaPos;
 
       // ── World position (zero-alloc) ──
       _prevPos.copy(butterflyWorldPos);
@@ -400,42 +485,66 @@ export default function Butterfly({
       _right.set(1, 0, 0).applyQuaternion(camera.quaternion);
       _up.set(0, 1, 0).applyQuaternion(camera.quaternion);
 
+      // curZ is negative when diving toward camera. Clamp the effective
+      // forward distance to a minimum so the butterfly never crosses the
+      // near-plane or passes behind the viewer.
+      const effForward = Math.max(0.35, cfg.forwardDist + curZ);
+
+      // Fly-in offset: while `entrance` ramps from 0 → 1, displace the
+      // butterfly off-screen down-right and farther back, so it visibly
+      // swoops into frame instead of popping in.
+      const flyIn = 1.0 - entrance;
+      const flyInRight = flyIn * visibleWidthAtDepth * 0.9;
+      const flyInDown  = flyIn * visibleHeightAtDepth * 0.7;
+      const flyInBack  = flyIn * cfg.forwardDist * 0.8;
+
+      // ── Wingbeat-synced body bob ──
+      // Body rises during downstroke (negative flapEnv), settles during the
+      // upstroke. Tiny amplitude — reads as life, not as bouncing.
+      const bob = -flapEnv * 0.012 * smoothScaleRef.current / scale;
+
       _finalPos.copy(camera.position)
-        .addScaledVector(_forward, cfg.forwardDist)
-        .addScaledVector(_right, curX)
-        .addScaledVector(_up, curY);
+        .addScaledVector(_forward, effForward + flyInBack)
+        .addScaledVector(_right, curX + flyInRight)
+        .addScaledVector(_up, curY - flyInDown + bob);
 
       groupRef.current.position.copy(_finalPos);
 
-      // Publish to shared ref for trail
       butterflyWorldPos.copy(_finalPos);
       butterflyVelocity.copy(_finalPos).sub(_prevPos);
 
-      // ── Velocity-based orientation ──
+      // ── Multi-axis orientation: velocity-derived + surreal idle tumble ──
       // Heading: yaw toward movement direction
-      const speed = Math.sqrt(velX * velX + velY * velY);
-      const headingAngle = speed > 0.0001
-        ? Math.atan2(-velX, 0.1) // yaw toward horizontal movement
-        : 0;
-      // Bank: roll into turns based on lateral velocity
-      const bankAngle = -velX * 25.0;
-      // Pitch: tilt based on vertical velocity
-      const pitchAngle = velY * 15.0;
+      const headingAngle = Math.atan2(-velX, 6.0);
+      // Bank: roll into lateral turns, plus a slow continuous tumble so the
+      // butterfly is never aligned to a single plane (the "surreal" feel).
+      const idleRoll = Math.sin(time * 0.37) * 0.35 + Math.sin(time * 0.91 + 1.4) * 0.15;
+      const bankAngle = THREE.MathUtils.clamp(-velX * 0.15 + idleRoll, -1.4, 1.4);
+      // Pitch: tilt with vertical motion, plus depth-velocity (dives forward
+      // when moving toward camera) and a slow nodding wobble.
+      const idlePitch = Math.sin(time * 0.53 + 0.6) * 0.18;
+      const pitchAngle = THREE.MathUtils.clamp(
+        velY * 0.15 - velZ * 0.18 + idlePitch,
+        -1.0,
+        1.0,
+      );
+      // Yaw: heading plus a slow side-to-side head sway
+      const idleYaw = Math.sin(time * 0.43 + 2.2) * 0.22;
 
       _targetQuat.copy(camera.quaternion);
       _diagonalEuler.set(
-        0.3 + pitchAngle,    // pitch — nose up/down with vertical motion
-        headingAngle,         // yaw — face movement direction
-        bankAngle,            // roll — bank into turns
+        0.3 + pitchAngle,
+        headingAngle + idleYaw,
+        bankAngle,
         'YXZ',
       );
       _diagonalQuat.setFromEuler(_diagonalEuler);
       _targetQuat.multiply(_diagonalQuat);
-      groupRef.current.quaternion.slerp(_targetQuat, alpha);
+      groupRef.current.quaternion.slerp(_targetQuat, rotAlpha);
 
       // ── Smooth scale transition ──
       const targetScale = scale * cfg.scaleMul;
-      smoothScaleRef.current += (targetScale - smoothScaleRef.current) * alpha;
+      smoothScaleRef.current += (targetScale - smoothScaleRef.current) * posAlpha;
       const s = smoothScaleRef.current;
       groupRef.current.scale.set(s, s, s);
 

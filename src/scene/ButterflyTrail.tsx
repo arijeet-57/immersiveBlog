@@ -6,13 +6,13 @@ import {
   Float32BufferAttribute,
   ShaderMaterial,
 } from 'three';
-import { butterflyWorldPos, TRAIL_INTENSITY } from './butterflyRef';
+import { butterflyWorldPos, butterflyVisibility, TRAIL_INTENSITY } from './butterflyRef';
 
 // Ring-buffer particle trail emitted from the butterfly's position.
 // 60 particles, ~2 s lifetime, single draw call via THREE.Points.
 
-const COUNT = 150;
-const LIFETIME = 2.0; // seconds
+const COUNT = 220;
+const LIFETIME = 3.4; // seconds — longer trail persistence for soft halo
 const INTENSITY = TRAIL_INTENSITY / 100; // normalised 0-1
 
 export default function ButterflyTrail() {
@@ -62,13 +62,20 @@ export default function ButterflyTrail() {
             vec4 mv = modelViewMatrix * vec4(p, 1.0);
             gl_Position = projectionMatrix * mv;
 
-            // Size: starts much larger, shrinks to tiny dust
-            float size = mix(6.0, 0.5, t) * uIntensity;
-            gl_PointSize = size * (120.0 / -mv.z);
+            // Variable particle sizes — small specks + larger motes.
+            // Pixel sizes (NOT distance-scaled) so dots stay crisp and bright.
+            float isBig = step(0.78, aSeed);                  // ~22% big motes
+            float sizeBase = mix(4.0, 9.0, aSeed);            // small sparkles
+            float sizeBig  = mix(14.0, 24.0, fract(aSeed * 7.13));
+            float size = mix(sizeBase, sizeBig, isBig);
+            float sizeEnv = mix(1.0, 0.55, smoothstep(0.2, 1.0, t));
+            // Mild depth attenuation only (clamped) so far particles don't vanish
+            float depthAtten = clamp(60.0 / -mv.z, 0.3, 3.0);
+            gl_PointSize = size * sizeEnv * uIntensity * depthAtten;
 
-            // Fade: quick ramp in, slow fade out
-            float fadeIn  = smoothstep(0.0, 0.05, t);
-            float fadeOut = 1.0 - smoothstep(0.3, 1.0, t);
+            // Fade: quick pop-in, slow lingering fade
+            float fadeIn  = smoothstep(0.0, 0.06, t);
+            float fadeOut = 1.0 - smoothstep(0.30, 1.0, t);
             vAlpha = fadeIn * fadeOut * step(0.0, age);
             vSeed = aSeed;
           }
@@ -81,18 +88,25 @@ export default function ButterflyTrail() {
             vec2 d = gl_PointCoord - 0.5;
             float dist = length(d);
             if (dist > 0.5) discard;
-            float intensity = smoothstep(0.5, 0.0, dist);
 
-            // 90% cyan-blue, 10% gold sparkle
-            vec3 cyan = vec3(0.20, 0.60, 1.0);
-            vec3 gold = vec3(0.85, 0.70, 0.35);
-            vec3 col = mix(cyan, gold, step(0.90, vSeed));
+            // Dot profile: hot bright core with a soft halo.
+            float core = smoothstep(0.30, 0.0, dist);
+            float halo = exp(-dist * dist * 5.0);
+            float intensity = core * 2.2 + halo * 0.7;
 
-            gl_FragColor = vec4(col * intensity * vAlpha * 1.8 * uIntensity, intensity * vAlpha * uIntensity);
+            // Blue + white palette
+            vec3 white = vec3(1.00, 1.00, 1.00);
+            vec3 blue  = vec3(0.40, 0.70, 1.00);
+            vec3 col = mix(blue, white, step(0.5, fract(vSeed * 13.37)));
+
+            // Strong emissive output — additive blending stacks across pixels.
+            vec3 outCol = col * intensity * vAlpha * 6.0 * uIntensity;
+            gl_FragColor = vec4(outCol, intensity * vAlpha * uIntensity);
           }
         `,
         transparent: true,
         depthWrite: false,
+        depthTest: false,        // always render on top — no occlusion from foliage / ground
         blending: AdditiveBlending,
         toneMapped: false,
       }),
@@ -106,16 +120,19 @@ export default function ButterflyTrail() {
     const posAttr   = geometry.attributes.position as Float32BufferAttribute;
     const birthAttr = geometry.attributes.aBirth   as Float32BufferAttribute;
 
-    // Emit 2–4 particles per frame at the butterfly's current position for a thicker trail
-    const emitCount = 2 + Math.floor(Math.random() * 3);
+    // Skip emission entirely while the butterfly is hidden — otherwise the
+    // ring buffer fills with stale particles at the off-screen fly-in pose.
+    if (butterflyVisibility.value < 0.05) return;
+
+    // Emit 3–5 puffs per frame with a wider scatter — denser, fluffier halo
+    const emitCount = 3 + Math.floor(Math.random() * 3);
     for (let e = 0; e < emitCount; e++) {
       const idx = headRef.current % COUNT;
-      // Slight random offset from center
       posAttr.setXYZ(
         idx,
-        butterflyWorldPos.x + (Math.random() - 0.5) * 0.04,
-        butterflyWorldPos.y + (Math.random() - 0.5) * 0.04,
-        butterflyWorldPos.z + (Math.random() - 0.5) * 0.04,
+        butterflyWorldPos.x + (Math.random() - 0.5) * 0.10,
+        butterflyWorldPos.y + (Math.random() - 0.5) * 0.10,
+        butterflyWorldPos.z + (Math.random() - 0.5) * 0.10,
       );
       birthRef.current[idx] = time;
       birthAttr.setX(idx, time);
@@ -127,6 +144,11 @@ export default function ButterflyTrail() {
   });
 
   return (
-    <points geometry={geometry} material={material} frustumCulled={false} />
+    <points
+      geometry={geometry}
+      material={material}
+      frustumCulled={false}
+      renderOrder={999}
+    />
   );
 }

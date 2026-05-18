@@ -18,7 +18,7 @@ import { useAppStore } from '../store/appStore';
 
 // Flower field stays on past the bridge so the field doesn't vanish
 // behind the camera mid-scroll — fog handles distance fade.
-const FIELD_VISIBLE_TO = 0.70;
+const FIELD_VISIBLE_TO = 0.88;
 
 const COUNT = 2000;
 const FIELD_SIZE = 40;
@@ -476,31 +476,49 @@ export default function FlowerField() {
     geometry.setAttribute('aBoost', new InstancedBufferAttribute(boostsRef.current, 1));
   }, [geometry]);
 
+  const boostDirtyRef = useRef(false);
+
   useFrame((state, dt) => {
+    const scroll = useAppStore.getState().scrollProgress;
+    const vis = scroll <= FIELD_VISIBLE_TO;
+    if (groupRef.current) groupRef.current.visible = vis;
+    if (!vis) return;
+
     material.uniforms.uTime.value = state.clock.elapsedTime;
     const boosts = boostsRef.current;
     const positions = positionsRef.current;
-    const decay = Math.pow(0.5, dt / RIPPLE_HALF_LIFE);
-    for (let i = 0; i < boosts.length; i++) boosts[i] *= decay;
-
     const mp = mouseWorld.current;
-    if (mp) {
-      const mx = mp.x;
-      const mz = mp.z;
-      const r2 = RIPPLE_RADIUS * RIPPLE_RADIUS;
-      for (let i = 0; i < COUNT; i++) {
-        const dx = positions[i * 2] - mx;
-        const dz = positions[i * 2 + 1] - mz;
-        const d2 = dx * dx + dz * dz;
-        if (d2 < r2) {
-          const k = 1 - d2 / r2;
-          // Increased from 0.5 to 4.0 so flowers glow brightly under the cursor
-          const target = 4.0 * k;
-          if (boosts[i] < target) boosts[i] = target;
+
+    // Only run boost decay/update when there's active glow
+    if (boostDirtyRef.current || mp) {
+      const decay = Math.pow(0.5, dt / RIPPLE_HALF_LIFE);
+      let anyNonZero = false;
+      for (let i = 0; i < boosts.length; i++) {
+        boosts[i] *= decay;
+        if (boosts[i] > 0.001) anyNonZero = true;
+        else boosts[i] = 0;
+      }
+
+      if (mp) {
+        const mx = mp.x;
+        const mz = mp.z;
+        const r2 = RIPPLE_RADIUS * RIPPLE_RADIUS;
+        for (let i = 0; i < COUNT; i++) {
+          const dx = positions[i * 2] - mx;
+          const dz = positions[i * 2 + 1] - mz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < r2) {
+            const k = 1 - d2 / r2;
+            const target = 4.0 * k;
+            if (boosts[i] < target) boosts[i] = target;
+            anyNonZero = true;
+          }
         }
       }
+
+      boostDirtyRef.current = anyNonZero;
+      (geometry.getAttribute('aBoost') as InstancedBufferAttribute).needsUpdate = true;
     }
-    (geometry.getAttribute('aBoost') as InstancedBufferAttribute).needsUpdate = true;
   });
 
   return (
