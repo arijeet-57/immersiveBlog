@@ -14,6 +14,12 @@ import {
   Vector3,
 } from 'three';
 import { useAppStore } from '../store/appStore';
+import { PALETTES } from './themePalette';
+
+// Basin color is fixed (not theme-dependent) so the riverbank substrate
+// matches the world ground in every mode and never re-tints when the
+// theme changes.
+const BASIN_COLOR = PALETTES.night.ground;
 
 const RIVER_VISIBLE_FROM = 0.00;
 const RIVER_VISIBLE_TO = 0.90;
@@ -28,10 +34,75 @@ import {
 // field (Act I) and the dark forest (Act II) at z ≈ -25 so the camera flies
 // directly over its widest section at scroll ≈ 0.68 — the "bridge moment".
 
-const RIVER_Z = -25;
 const RIVER_WIDTH = 11.0;
 const SEGMENTS_LEN = 220;
 const SEGMENTS_W = 1;
+
+// Independent multi-octave wobble functions for left & right banks. Different
+// frequencies/phases per side so the river never reads as symmetric — banks
+// meander, narrow, widen, and pinch like a real watercourse.
+function leftBankWobble(t: number): number {
+  return (
+    Math.sin(t * Math.PI * 7.3 + 0.7) * 0.45 +
+    Math.sin(t * Math.PI * 17.1 + 2.3) * 0.22 +
+    Math.sin(t * Math.PI * 37.5 + 4.1) * 0.10 +
+    Math.sin(t * Math.PI * 81.7 + 5.7) * 0.04
+  );
+}
+function rightBankWobble(t: number): number {
+  return (
+    Math.sin(t * Math.PI * 8.1 + 1.5) * 0.45 +
+    Math.sin(t * Math.PI * 19.3 + 3.1) * 0.22 +
+    Math.sin(t * Math.PI * 41.7 + 5.2) * 0.10 +
+    Math.sin(t * Math.PI * 89.3 + 2.4) * 0.04
+  );
+}
+// Bank wobble amplitude in world units. Larger = more meandering edges.
+const BANK_WOBBLE_AMP = 2.4;
+
+// Build a wide "wet earth" strip following the river curve. Sits a hair
+// below the water so it reads as the bank/basin material under the
+// dissolved river edge and the wobbling banks. Width is generous so the
+// strip extends well past the rocks and meander excursion — no gap to
+// the surrounding forest ground.
+function buildBasinGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  const tangent = new Vector3();
+  const up = new Vector3(0, 1, 0);
+  const side = new Vector3();
+  const point = new Vector3();
+  const BASIN_HALF_WIDTH = 14; // extends ~6 units past the widest meander
+
+  for (let i = 0; i <= SEGMENTS_LEN; i++) {
+    const t = i / SEGMENTS_LEN;
+    riverCurve.getPoint(t, point);
+    riverCurve.getTangent(t, tangent).normalize();
+    side.crossVectors(tangent, up).normalize();
+    for (let j = 0; j <= 1; j++) {
+      const u = j;
+      const off = (u - 0.5) * 2 * BASIN_HALF_WIDTH;
+      // Basin Y is well below the river surface (y=0.14) so the two never
+      // z-fight; polygonOffset on the material pulls it cleanly above the
+      // world ground plane (y=-0.02) so the bank-side edge is also safe.
+      positions.push(point.x + side.x * off, 0.04, point.z + side.z * off);
+    }
+  }
+  for (let i = 0; i < SEGMENTS_LEN; i++) {
+    const a = i * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, b, d, a, d, c);
+  }
+  const g = new BufferGeometry();
+  g.setIndex(indices);
+  g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
 
 function buildRiverGeometry(): BufferGeometry {
   const positions: number[] = [];
@@ -52,9 +123,23 @@ function buildRiverGeometry(): BufferGeometry {
     const widthSwell = 1.0 + 0.35 * Math.exp(-Math.pow((t - 0.5) / 0.18, 2.0));
     const w =
       RIVER_WIDTH * (0.85 + 0.25 * Math.sin(t * Math.PI * 3.7)) * widthSwell;
+
+    // Per-side bank perturbation — left and right edges wander independently.
+    // Taper the wobble to zero at the very start and end of the river so the
+    // endpoints stay clean against neighbouring scenery.
+    const endTaper = Math.min(t, 1 - t) * 4;
+    const taper = Math.min(1, endTaper);
+    const leftWob  = leftBankWobble(t)  * BANK_WOBBLE_AMP * taper;
+    const rightWob = rightBankWobble(t) * BANK_WOBBLE_AMP * taper;
+
     for (let j = 0; j <= SEGMENTS_W; j++) {
       const u = j / SEGMENTS_W;
-      const off = (u - 0.5) * 2 * (w * 0.5);
+      // Asymmetric bank perturbation: the left edge (u=0) gets pushed by
+      // leftWob, the right edge (u=1) by rightWob. Interior vertices (if
+      // any) get a smooth blend so the surface deforms continuously.
+      const leftEdge  = -w * 0.5 - leftWob;
+      const rightEdge =  w * 0.5 + rightWob;
+      const off = leftEdge + (rightEdge - leftEdge) * u;
       const px = point.x + side.x * off;
       const py = 0.14;
       const pz = point.z + side.z * off;
@@ -129,13 +214,12 @@ function buildRiverMaterial(): ShaderMaterial {
         vec2 u = f * f * (3.0 - 2.0 * f);
         return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
       }
+      // 2-octave fbm — was 4. The visible water surface is busy enough
+      // from the layered waveHeight samples below; the extra octaves were
+      // burning fragment time without a perceptible quality gain.
       float fbm(vec2 p) {
-        float v = 0.0; float amp = 0.5;
-        for (int i = 0; i < 4; i++) {
-          v += amp * vnoise(p);
-          p = p * 2.07 + vec2(3.7, 1.9);
-          amp *= 0.5;
-        }
+        float v = vnoise(p) * 0.6;
+        v += vnoise(p * 2.07 + vec2(3.7, 1.9)) * 0.3;
         return v;
       }
 
@@ -144,11 +228,12 @@ function buildRiverMaterial(): ShaderMaterial {
       // entire wave pattern advect downstream. Three layered scales with
       // increasing speed give the look of small wavelets riding on slow
       // swells. A tiny cross-shear keeps it from feeling like a conveyor.
+      // Two wave scales instead of three. The dropped fine scale (c) was
+      // mostly invisible past a few meters and read as noise per-pixel.
       float waveHeight(vec2 uv) {
         vec2 a = vec2(uv.x *  6.0, uv.y *  20.0 - uTime * 1.30);
-        vec2 b = vec2(uv.x * 12.0 + uTime * 0.18, uv.y * 42.0 - uTime * 2.10);
-        vec2 c = vec2(uv.x * 24.0 - uTime * 0.10, uv.y * 88.0 - uTime * 3.40);
-        return fbm(a) * 0.55 + fbm(b) * 0.30 + fbm(c) * 0.18;
+        vec2 b = vec2(uv.x * 14.0 + uTime * 0.18, uv.y * 48.0 - uTime * 2.10);
+        return fbm(a) * 0.65 + fbm(b) * 0.35;
       }
 
       // Sky color sampled along a reflected ray direction. Dark blue zenith,
@@ -275,11 +360,22 @@ function buildRiverMaterial(): ShaderMaterial {
         col *= mix(0.78, 1.0, bankFade);
         col += foamCol * streakMask * calm * bankFade * 0.30;
 
-        gl_FragColor = vec4(col, 1.0);
+        // ── Edge dissolve ───────────────────────────────────────────────
+        // The river's geometric edge is broken up by a noisy alpha mask:
+        // distance from the bank is offset by an fbm so the bank line
+        // reads as natural shoreline (wet patches, fingers of water)
+        // instead of a clean cut. Wider transition zone => softer edge.
+        float distFromBank = 1.0 - abs(vUv.x - 0.5) * 2.0; // 1 at center, 0 at edge
+        float edgeNoise = fbm(vec2(vUv.y * 28.0, vUv.x * 14.0 + uTime * 0.05));
+        float edgeMask = smoothstep(0.0, 0.18, distFromBank + (edgeNoise - 0.5) * 0.18);
+
+        gl_FragColor = vec4(col, edgeMask);
       }
     `,
     side: DoubleSide,
     toneMapped: false,
+    transparent: true,
+    depthWrite: false,
   });
 }
 
@@ -455,9 +551,13 @@ function buildRockMaterial(): ShaderMaterial {
   });
 }
 
+// Singleton geometry — built once, reused.
+const basinGeometryFactory = () => buildBasinGeometry();
+
 export default function BiolumeRiver() {
   const groupRef = useRef<Group>(null);
   const geometry = useMemo(() => buildRiverGeometry(), []);
+  const basinGeometry = useMemo(() => basinGeometryFactory(), []);
   const material = useMemo(() => buildRiverMaterial(), []);
   const matRef = useRef(material);
 
@@ -639,12 +739,25 @@ export default function BiolumeRiver() {
 
   return (
     <group ref={groupRef}>
-      {/* Darker mud/wet-earth basin under the river. Color softened so the
-          basin blends into the main ground plane (no harsh band visible
-          beyond the riverbank rocks). */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.10, RIVER_Z]}>
-        <planeGeometry args={[200, 22]} />
-        <meshBasicMaterial color="#0a1622" toneMapped={false} fog />
+      {/* Wet-earth basin strip that follows the river curve. Significantly
+          wider than the river so the dissolved edge & bank meander always
+          have a darker substrate underneath — no gap to the surrounding
+          forest ground. */}
+      <mesh geometry={basinGeometry} frustumCulled={false} renderOrder={-1}>
+        {/* Fixed ground color (same in every theme) so the basin always
+            matches the surrounding forest floor and never changes hue
+            with the mode. polygonOffset pushes the basin reliably above
+            the world ground plane so the two never z-fight at the
+            shoreline, which was the source of the flickering "glitch"
+            on the forest side of the river. */}
+        <meshBasicMaterial
+          color={BASIN_COLOR}
+          toneMapped={false}
+          fog
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
+        />
       </mesh>
       <mesh geometry={geometry} material={material} frustumCulled={false} />
       {/* Riverbank rocks: boulders, mid rocks, pebbles */}

@@ -16,6 +16,7 @@ import {
   Group,
 } from 'three';
 import { useAppStore } from '../store/appStore';
+import { getPalette } from './themePalette';
 
 // Act III½ — the Moonlit Valley.
 //
@@ -112,7 +113,12 @@ function hillHeight(x: number, z: number): number {
   const tZ = (VALLEY_Z_NEAR - z) / VALLEY_DEPTH;
   const mergeMask = smoothstep(0.40, 0.44, tZ);
 
-  return (rolling + ridge + basin + basinHills + knoll) * mergeMask;
+  // Clamp the surface to stay just above the global ground plane (y=-0.02).
+  // Otherwise valley dips would render below the ground plane and be
+  // occluded by it — producing visible "holes" where the basin used to
+  // show. A 0.05 floor keeps the terrain everywhere visible.
+  const h = (rolling + ridge + basin + basinHills + knoll) * mergeMask;
+  return Math.max(0.05, h);
 }
 
 function smoothstep(edge0: number, edge1: number, x: number) {
@@ -179,7 +185,11 @@ function bakeTerrainGeometry(): BufferGeometry {
 
 function buildTerrainMaterial(): ShaderMaterial {
   return new ShaderMaterial({
-    uniforms: {},
+    uniforms: {
+      // Fog color is updated per-theme so the valley fades into the
+      // matching sky color (no horizon seam in dawn/day modes).
+      uFogColor: { value: new Color('#0c1b2c') },
+    },
     vertexShader: /* glsl */ `
       varying vec3 vWorldPos;
       varying vec3 vNormal;
@@ -193,6 +203,7 @@ function buildTerrainMaterial(): ShaderMaterial {
     fragmentShader: /* glsl */ `
       varying vec3 vWorldPos;
       varying vec3 vNormal;
+      uniform vec3 uFogColor;
 
       // 3D Value Noise for FBM
       float hash(vec3 p) {
@@ -268,9 +279,10 @@ function buildTerrainMaterial(): ShaderMaterial {
         col = mix(col, riverColor, toRiver);
 
         // --- ATMOSPHERIC FOG ---
+        // Fades the distant valley into the current theme's sky color.
         float fogDist = length(cameraPosition - vWorldPos);
         float fogFactor = smoothstep(30.0, 320.0, fogDist);
-        col = mix(col, vec3(0.047, 0.106, 0.173), fogFactor); // #0c1b2c
+        col = mix(col, uFogColor, fogFactor);
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -1275,10 +1287,15 @@ export default function Valley() {
   }, [grassGeom, bushGeom, leafGeom]);
 
   useFrame((state) => {
-    const scroll = useAppStore.getState().scrollProgress;
+    const store = useAppStore.getState();
+    const scroll = store.scrollProgress;
     const vis = scroll >= VALLEY_VISIBLE_FROM;
     if (groupRef.current) groupRef.current.visible = vis;
     if (!vis) return;
+
+    // Keep the terrain's fog color synced with the current theme's sky so
+    // the distant valley fades into the matching horizon, no seam.
+    (terrainMat.uniforms.uFogColor.value as Color).set(getPalette(store.theme).fog);
 
     const t = state.clock.elapsedTime;
     flowerMat.uniforms.uTime.value = t;

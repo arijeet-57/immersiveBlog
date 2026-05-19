@@ -3,9 +3,11 @@ import { BloomEffect } from 'postprocessing';
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useAppStore } from '../store/appStore';
+import { getPalette } from './themePalette';
 
-// Bloom intensity baseline and the "bridge moment" peak as the camera flies
-// directly over the widened section of the river at scroll ≈ 0.68.
+// Bloom baseline is theme-dependent — at night & dawn we want plenty of
+// glow on biolume; in daylight we tone bloom way down or everything
+// looks blown out.
 const BLOOM_BASE = 0.40;
 const BLOOM_BRIDGE_PEAK = 0.95;
 const BRIDGE_START = 0.60;
@@ -36,14 +38,16 @@ function BloomController({ bloomRef }: { bloomRef: BloomRef }) {
   useFrame(() => {
     const eff = bloomRef.current;
     if (!eff) return;
-    const s = useAppStore.getState().scrollProgress;
+    const state = useAppStore.getState();
+    const s = state.scrollProgress;
+    const base = getPalette(state.theme).bloomBase;
     const bridgeK = smoothstep01(triangle(s, BRIDGE_START, BRIDGE_PEAK, BRIDGE_END));
     const moonK = smoothstep01(
       Math.max(0, Math.min(1, (s - MOON_START) / (MOON_END - MOON_START)))
     );
-    const bridgeContrib = (BLOOM_BRIDGE_PEAK - BLOOM_BASE) * bridgeK;
-    const moonContrib = (BLOOM_MOON_PEAK - BLOOM_BASE) * moonK;
-    eff.intensity = BLOOM_BASE + Math.max(bridgeContrib, moonContrib);
+    const bridgeContrib = (BLOOM_BRIDGE_PEAK - base) * bridgeK;
+    const moonContrib = (BLOOM_MOON_PEAK - base) * moonK;
+    eff.intensity = base + Math.max(bridgeContrib, moonContrib);
   });
   return null;
 }

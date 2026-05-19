@@ -4,6 +4,8 @@ import { BufferGeometry, Float32BufferAttribute, ShaderMaterial, AdditiveBlendin
 import { Stars, Clouds, Cloud } from '@react-three/drei';
 import * as THREE from 'three';
 import Butterfly from './Butterfly';
+import { useAppStore } from '../store/appStore';
+import { getPalette } from './themePalette';
 
 // Control the mist, clouds, and fog volume and thickness across the environment (0 to 100)
 // Mist is kept light — just enough to cloak distant geometry so it fades in
@@ -59,8 +61,11 @@ function AmbientMist() {
             
             vec4 mv = modelViewMatrix * vec4(p, 1.0);
             gl_Position = projectionMatrix * mv;
-            // HUGE soft particles for mist patches
-            gl_PointSize = (2000.0 + aSeed.z * 1500.0) / -mv.z;
+            // Smaller soft particles than before (was 2000 + 1500). Huge
+            // additive sprites torched fillrate via overlap-overdraw; the
+            // mist still reads soft because alpha is low and we have
+            // many particles.
+            gl_PointSize = (1100.0 + aSeed.z * 700.0) / -mv.z;
             
             // Pulsing opacity scaled by the percentage constant
             vAlpha = (0.01 + 0.03 * sin(uTime * 0.2 + aSeed.x * 6.28)) * uMistIntensity;
@@ -96,6 +101,10 @@ function AmbientMist() {
 }
 
 function SkyClouds() {
+  // Suppress the night-tinted volumetric clouds in dawn/day — those themes
+  // ship their own atmospheric cloud bands.
+  const theme = useAppStore((s) => s.theme);
+  if (theme !== 'night') return null;
   if (CLOUD_PERCENTAGE <= 0) return null;
   const cloudCount = Math.floor(10 * (CLOUD_PERCENTAGE / 100));
 
@@ -121,34 +130,39 @@ function SkyClouds() {
 }
 
 export default function Environment() {
-  // Light "cloak" fog: near objects (under ~40 units) render fully clear,
-  // distant geometry fades gracefully into the haze and reveals as the
-  // camera approaches. Linear three.js fog already does the proximity
-  // reveal automatically — we just pick a moderate near/far so nothing
-  // ever pops in at the edge of view.
+  const theme = useAppStore((s) => s.theme);
+  const palette = getPalette(theme);
+
+  // Light "cloak" fog: near objects render clear, distant geometry fades
+  // into haze. Fog far is wider in day mode (the haze is lighter / further).
   const fogNear = 40;
-  const fogFar  = 180;
+  const fogFar  =
+    theme === 'day' ? 260 :
+    theme === 'dawn' ? 130 :
+    180;
 
   return (
     <>
-      {/* Atmospheric cloak fog — matches the canvas clear color so the
-          ground plane dissolves into the sky at the horizon with no
-          visible seam. */}
-      <fog attach="fog" args={['#0a1530', fogNear, fogFar]} />
-      {/* Drifting Mist */}
+      <color attach="background" args={[palette.sky]} />
+      <ambientLight intensity={palette.ambient} />
+      {palette.fill > 0 && (
+        <hemisphereLight
+          args={[palette.sky, palette.ground, palette.fill]}
+        />
+      )}
+      <fog attach="fog" args={[palette.fog, fogNear, fogFar]} />
       <AmbientMist />
-      {/* Volumetric Clouds */}
       <SkyClouds />
-      {/* Fewer, fainter stars */}
-      <Stars radius={500} depth={80} count={900} factor={3} fade speed={0.4} />
+      {palette.stars && (
+        <Stars radius={500} depth={80} count={900} factor={3} fade speed={0.4} />
+      )}
 
-      {/* Cool-blue tinted ground plane. Extended well past the fog's far
-          plane (320) so the land reads as continuous all the way to the
-          horizon and dissolves into haze — no visible plane-edge seam
-          where the ground would otherwise stop and reveal the void. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} renderOrder={-1}>
         <planeGeometry args={[2000, 2000]} />
-        <meshBasicMaterial color="#0c1b2c" toneMapped={false} fog depthWrite={false} />
+        {/* depthWrite must be ON — otherwise the ground doesn't occlude the
+            flower stems / foliage roots beneath it and you can see through
+            into the negative-Y void. */}
+        <meshBasicMaterial color={palette.ground} toneMapped={false} fog />
       </mesh>
     </>
   );

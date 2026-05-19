@@ -49,7 +49,21 @@ export default function GlassPanel({
   return (
     <div style={{ ...base, ...style }} className={className}>
       <div style={sweep} aria-hidden />
-      <div style={{ position: 'relative' }}>{children}</div>
+      {/* Inner wrapper passes the outer flex layout through to children so
+          overlays can use `display: flex; flex-direction: column` on the
+          panel and have a scrollable child fill the remaining height. */}
+      <div
+        style={{
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          flex: '1 1 auto',
+          minHeight: 0,
+          maxHeight: 'inherit',
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

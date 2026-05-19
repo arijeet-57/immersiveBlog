@@ -11,20 +11,63 @@ import BiolumeRiver from './BiolumeRiver';
 import DarkForest from './DarkForest';
 import Valley from './Valley';
 import Moon from './Moon';
+import Sun, { SUN_POS } from './Sun';
+import SunsetSky, { SUNSET_SUN_POS } from './SunsetSky';
+import DaySky from './DaySky';
 import Butterfly from './Butterfly';
 import ButterflyTrail from './ButterflyTrail';
+import { useAppStore } from '../store/appStore';
+import { getPalette } from './themePalette';
+
+function ThemedMoon() {
+  const theme = useAppStore((s) => s.theme);
+  if (!getPalette(theme).moon) return null;
+  return <Moon />;
+}
+
+function ThemedFireflies() {
+  // Fireflies only really read in the dark.
+  const theme = useAppStore((s) => s.theme);
+  if (theme === 'day') return null;
+  return <Fireflies />;
+}
+
+function ThemedSun() {
+  const theme = useAppStore((s) => s.theme);
+  if (theme !== 'day') return null;
+  return (
+    <>
+      <DaySky />
+      <Sun />
+      {/* Directional light from the sun's direction — actually brightens
+          surfaces (foliage, valley, ground). Warm-white to match the disc tint. */}
+      <directionalLight position={SUN_POS} intensity={1.8} color="#fff2d8" />
+    </>
+  );
+}
+
+function ThemedSunset() {
+  const theme = useAppStore((s) => s.theme);
+  if (theme !== 'dawn') return null;
+  return (
+    <>
+      <SunsetSky />
+      {/* Low warm directional light coming from the setting sun — gives the
+          scene the long-shadow red-tinted feel of golden hour. */}
+      <directionalLight position={SUNSET_SUN_POS} intensity={1.1} color="#ff8a4a" />
+    </>
+  );
+}
 
 export default function World() {
   return (
     <Canvas
       gl={{ antialias: false, powerPreference: 'high-performance', stencil: false, depth: true }}
-      dpr={[0.5, 2]}
+      dpr={[0.75, 1.5]}
       performance={{ min: 0.5 }}
       camera={{ position: [0, 15, 0], fov: 45, near: 0.05, far: 1000 }}
-      style={{ position: 'fixed', inset: 0, background: '#0a1530' }}
+      style={{ position: 'fixed', inset: 0 }}
     >
-      <color attach="background" args={['#0a1530']} />
-      <ambientLight intensity={0.15} />
       <Suspense fallback={null}>
         {/* Auto-adapt resolution when framerate drops. Tuned to ignore
             the inevitable first-second shader-compile spike so we don't
@@ -58,8 +101,10 @@ export default function World() {
         <BiolumeRiver />
         <DarkForest />
         <Valley />
-        <Moon />
-        <Fireflies />
+        <ThemedMoon />
+        <ThemedSun />
+        <ThemedSunset />
+        <ThemedFireflies />
         <PostFX />
       </Suspense>
     </Canvas>

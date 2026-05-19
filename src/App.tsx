@@ -10,11 +10,14 @@ import ScrollProgress from './ui/ScrollProgress';
 import SeoPostBodies from './content/SeoPostBodies';
 import Loader from './ui/Loader';
 import PinnedScrollHint from './ui/PinnedScrollHint';
+import SocialLinks from './ui/SocialLinks';
+import { AuthProvider } from './auth/AuthProvider';
 
 export default function App() {
   return (
     <HelmetProvider>
       <BrowserRouter>
+        <AuthProvider>
         <RouteSync />
         <SmoothScrollProvider>
           <World />
@@ -23,6 +26,7 @@ export default function App() {
           <Hud />
           <ScrollProgress />
           <PinnedScrollHint />
+          <SocialLinks />
           <SeoPostBodies />
           {/* Scrollable spacer — gives the page enough vertical length to
               cover all four acts. Longer = each panel range corresponds to
@@ -32,6 +36,7 @@ export default function App() {
           <div aria-hidden="true" style={{ height: '1400vh' }} />
         </SmoothScrollProvider>
         <Loader />
+        </AuthProvider>
       </BrowserRouter>
     </HelmetProvider>
   );

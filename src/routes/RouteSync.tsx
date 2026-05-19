@@ -23,15 +23,16 @@ export default function RouteSync() {
     const spec = routeToPanel(pathname);
     if (spec) {
       setPinned(spec.id);
-      // Cold-load deep-link: seed the store synchronously so the camera's
-      // first frame is already on-target. The DOM scroll is then aligned via
-      // Lenis on the next rAF (with immediate:true so there's no fly-through).
+      // Only realign scroll on cold load (deep-link). For client-side
+      // navigation triggered by the nav bar or any other in-app link, the
+      // overlay handles the UI entirely — keep the world & page scroll
+      // exactly where the user left them.
       if (isColdLoad.current) {
         useAppStore.getState().setScrollProgress(spec.range[1]);
+        requestAnimationFrame(() => {
+          scrollToProgress(spec.range[1], { immediate: true });
+        });
       }
-      requestAnimationFrame(() => {
-        scrollToProgress(spec.range[1], { immediate: isColdLoad.current });
-      });
     } else {
       setPinned(null);
     }

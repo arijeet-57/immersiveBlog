@@ -23,6 +23,7 @@ import {
   RIVER_LIGHT_COLOR,
 } from './riverLights';
 import { positionCurve } from './spline';
+import { riverCurve } from './riverLights';
 import { FOREST_SMOG_PERCENTAGE } from './Environment';
 
 // Tall realistic-style conifers (pines). Each tree is a single merged mesh:
@@ -31,13 +32,45 @@ import { FOREST_SMOG_PERCENTAGE } from './Environment';
 // vs needles for both surfaces in one draw call per InstancedMesh.
 
 const TREE_COUNT = 150;
-const GRASS_COUNT = 1000000;
+// Was 1,000,000 — the per-frame vertex-shader cost on that many instances
+// was the dominant frame-time hit. 250k still reads as a dense forest floor
+// because the blades are small and depth-faded.
+const GRASS_COUNT = 800000;
 const BUSH_COUNT = 1000;
 const FERN_COUNT = 400;
 
 // World range the forest covers. Starts just behind the river (z = -25),
 // ends where the moonlit valley begins (~z = -195).
-const FOREST_Z_NEAR = -32;
+// Forest meets the river bank — closes the gap that used to show as a
+// strip of bare ground between the riverbank rocks and the first trees.
+const FOREST_Z_NEAR = -22;
+
+// ── River exclusion ─────────────────────────────────────────────────────
+// Sample the river curve once at module load. Any tree/grass/bush/fern
+// candidate within RIVER_EXCLUDE_RADIUS of *any* sample is rejected — so
+// forest doesn't render on top of the water. Radius covers river half-
+// width + meander wobble + shore margin.
+const RIVER_SAMPLES: Array<{ x: number; z: number }> = (() => {
+  const out: Array<{ x: number; z: number }> = [];
+  const N = 80;
+  const v = new Vector3();
+  for (let i = 0; i <= N; i++) {
+    riverCurve.getPoint(i / N, v);
+    out.push({ x: v.x, z: v.z });
+  }
+  return out;
+})();
+const RIVER_EXCLUDE_RADIUS = 9.0;
+const RIVER_EXCLUDE_RADIUS_SQ = RIVER_EXCLUDE_RADIUS * RIVER_EXCLUDE_RADIUS;
+
+function nearRiver(x: number, z: number): boolean {
+  for (const s of RIVER_SAMPLES) {
+    const dx = s.x - x;
+    const dz = s.z - z;
+    if (dx * dx + dz * dz < RIVER_EXCLUDE_RADIUS_SQ) return true;
+  }
+  return false;
+}
 const FOREST_Z_FAR = -195;
 const FOREST_HALF_W = 70;
 
@@ -712,6 +745,7 @@ function sampleTrees(count: number): Array<{ x: number; z: number; rot: number; 
         }
       }
       if (inCorridor) continue;
+      if (nearRiver(x, z)) continue;
 
       const rot = Math.random() * Math.PI * 2;
       const scale = 0.85 + Math.random() * 0.55; // ±height jitter
@@ -734,7 +768,7 @@ function ForestFireflies() {
     const g = new BufferGeometry();
     const positions = new Float32Array(FIREFLY_COUNT * 3);
     const seeds = new Float32Array(FIREFLY_COUNT * 3);
-    
+
     // Distribute randomly through the forest
     for (let i = 0; i < FIREFLY_COUNT; i++) {
       positions[i * 3] = (Math.random() - 0.5) * (FOREST_HALF_W * 2);
@@ -808,7 +842,7 @@ function ForestSmog() {
     const g = new BufferGeometry();
     const positions = new Float32Array(count * 3);
     const seeds = new Float32Array(count * 3);
-    
+
     // Distribute randomly inside the forest depth
     for (let i = 0; i < count; i++) {
       positions[i * 3] = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 50);
@@ -959,8 +993,25 @@ export default function DarkForest() {
       const { zNear, zFar } = stripBounds[strip];
       const stripGrassSeeds = new Float32Array(GRASS_PER_STRIP);
       for (let i = 0; i < GRASS_PER_STRIP; i++) {
-        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 30);
-        const z = zNear - Math.random() * (zNear - zFar);
+        // Reject positions that fall on the river. Up to 8 retries; if
+        // all are on water, zero-scale the instance so it doesn't render.
+        let x = 0, z = 0, ok = false;
+        for (let t = 0; t < 8; t++) {
+          x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 30);
+          z = zNear - Math.random() * (zNear - zFar);
+          if (!nearRiver(x, z)) { ok = true; break; }
+        }
+        if (!ok) {
+          // Park this instance well below ground & zero scale.
+          pos.set(0, -1000, 0);
+          e.set(0, 0, 0, 'YXZ');
+          q.setFromEuler(e);
+          scale.set(0, 0, 0);
+          m.compose(pos, q, scale);
+          gmesh.setMatrixAt(i, m);
+          stripGrassSeeds[i] = 0;
+          continue;
+        }
         pos.set(x, 0, z);
         const pitch = (Math.random() - 0.5) * 0.20;
         const yaw = Math.random() * Math.PI * 2;
@@ -981,8 +1032,21 @@ export default function DarkForest() {
 
     if (bmesh) {
       for (let i = 0; i < BUSH_COUNT; i++) {
-        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
-        const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+        let x = 0, z = 0, ok = false;
+        for (let t = 0; t < 8; t++) {
+          x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
+          z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+          if (!nearRiver(x, z)) { ok = true; break; }
+        }
+        if (!ok) {
+          pos.set(0, -1000, 0);
+          e.set(0, 0, 0, 'YXZ');
+          q.setFromEuler(e);
+          scale.set(0, 0, 0);
+          m.compose(pos, q, scale);
+          bmesh.setMatrixAt(i, m);
+          continue;
+        }
         pos.set(x, 0, z);
         const yaw = Math.random() * Math.PI * 2;
         e.set(0, yaw, 0, 'YXZ');
@@ -1001,8 +1065,22 @@ export default function DarkForest() {
     if (fmesh) {
       const fernSeeds = new Float32Array(FERN_COUNT);
       for (let i = 0; i < FERN_COUNT; i++) {
-        const x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
-        const z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+        let x = 0, z = 0, ok = false;
+        for (let t = 0; t < 8; t++) {
+          x = (Math.random() - 0.5) * (FOREST_HALF_W * 2 + 20);
+          z = FOREST_Z_NEAR - Math.random() * (FOREST_Z_NEAR - FOREST_Z_FAR);
+          if (!nearRiver(x, z)) { ok = true; break; }
+        }
+        if (!ok) {
+          pos.set(0, -1000, 0);
+          e.set(0, 0, 0, 'YXZ');
+          q.setFromEuler(e);
+          scale.set(0, 0, 0);
+          m.compose(pos, q, scale);
+          fmesh.setMatrixAt(i, m);
+          fernSeeds[i] = 0;
+          continue;
+        }
         pos.set(x, 0, z);
         const yaw = Math.random() * Math.PI * 2;
         e.set(0, yaw, 0, 'YXZ');

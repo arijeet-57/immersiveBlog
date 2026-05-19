@@ -139,3 +139,66 @@ canvas {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
 }
+
+/* Hide native scrollbars on the in-overlay scroll regions (article bodies,
+   guestbook list, chronicles list). Keeps the panels looking clean while
+   the content still scrolls. */
+[data-lenis-prevent] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+[data-lenis-prevent]::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Chronicle reader body — typography for MDX post content rendered
+   inside the in-page glass overlay. */
+.chronicle-body p {
+  margin: 0 0 1em;
+}
+.chronicle-body p:last-child {
+  margin-bottom: 0;
+}
+.chronicle-body h2 {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 1.6em 0 0.6em;
+  letter-spacing: 0.01em;
+  opacity: 0.94;
+}
+.chronicle-body h3 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 1.4em 0 0.5em;
+  opacity: 0.88;
+}
+.chronicle-body a {
+  color: rgba(180, 220, 255, 0.95);
+  text-decoration: underline;
+  text-decoration-color: rgba(180, 220, 255, 0.4);
+  text-underline-offset: 2px;
+}
+.chronicle-body blockquote {
+  margin: 1.2em 0;
+  padding: 0.4em 0 0.4em 1em;
+  border-left: 2px solid rgba(180, 220, 255, 0.35);
+  opacity: 0.85;
+  font-style: italic;
+}
+.chronicle-body code {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.chronicle-body ul,
+.chronicle-body ol {
+  margin: 0.6em 0;
+  padding-left: 1.4em;
+}
+.chronicle-body li {
+  margin-bottom: 0.35em;
+}
