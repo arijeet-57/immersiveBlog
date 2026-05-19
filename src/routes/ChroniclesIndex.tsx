@@ -3,10 +3,10 @@ import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate } from 'react-router-dom';
 import GlassPanel from '../ui/GlassPanel';
 import OverlayControls from '../ui/OverlayControls';
-import { posts } from '../content/posts';
+import { PostStats } from '../ui/PostInteractions';
+import { useChronicleList } from '../content/firestoreChronicles';
 
 const SITE = 'Ethereal Valley';
-const RECENT = posts.slice(0, 5);
 
 const overlay: CSSProperties = {
   position: 'fixed',
@@ -29,7 +29,9 @@ const panelStyle: CSSProperties = {
 
 export default function ChroniclesIndex() {
   const navigate = useNavigate();
-  const description = `Field notes from the valley — ${posts.length} chronicles, latest: "${posts[0]?.title ?? ''}".`;
+  const { items } = useChronicleList();
+  const recent = items.slice(0, 5);
+  const description = `Field notes from the valley — ${items.length} chronicles, latest: "${items[0]?.title ?? ''}".`;
 
   return (
     <>
@@ -65,7 +67,7 @@ export default function ChroniclesIndex() {
                 Field notes from the valley
               </h1>
               <p style={{ marginTop: 6, fontSize: 13, opacity: 0.65 }}>
-                The {Math.min(5, posts.length)} most recent.
+                The {Math.min(5, items.length)} most recent.
               </p>
             </div>
             <ul
@@ -79,7 +81,7 @@ export default function ChroniclesIndex() {
                 flex: 1,
               }}
             >
-              {RECENT.map((p) => (
+              {recent.map((p) => (
                 <li key={p.slug}>
                   <Link
                     to={`/chronicles/${p.slug}`}
@@ -131,6 +133,9 @@ export default function ChroniclesIndex() {
                     >
                       {p.excerpt}
                     </p>
+                    <div style={{ marginTop: 8 }}>
+                      <PostStats slug={p.slug} />
+                    </div>
                   </Link>
                 </li>
               ))}

@@ -12,12 +12,15 @@ import Loader from './ui/Loader';
 import PinnedScrollHint from './ui/PinnedScrollHint';
 import SocialLinks from './ui/SocialLinks';
 import { AuthProvider } from './auth/AuthProvider';
+import { ProfileProvider } from './auth/ProfileProvider';
+import WelcomeOnboarding from './ui/WelcomeOnboarding';
 
 export default function App() {
   return (
     <HelmetProvider>
       <BrowserRouter>
         <AuthProvider>
+        <ProfileProvider>
         <RouteSync />
         <SmoothScrollProvider>
           <World />
@@ -36,6 +39,8 @@ export default function App() {
           <div aria-hidden="true" style={{ height: '1400vh' }} />
         </SmoothScrollProvider>
         <Loader />
+        <WelcomeOnboarding />
+        </ProfileProvider>
         </AuthProvider>
       </BrowserRouter>
     </HelmetProvider>

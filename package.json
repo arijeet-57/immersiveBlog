@@ -18,7 +18,9 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-helmet-async": "^2.0.5",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.30.3",
+    "remark-gfm": "^4.0.1",
     "three": "^0.169.0",
     "zustand": "^4.5.7"
   },

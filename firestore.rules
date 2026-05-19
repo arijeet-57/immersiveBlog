@@ -1,0 +1,165 @@
+rules_version = '2';
+
+// Security model for Ethereal Valley
+// ----------------------------------
+// posts/{slug}                       — like-count metadata (only mutated via
+//                                       a single-field increment from a signed-in
+//                                       user that is also writing their like doc).
+// posts/{slug}/likes/{uid}           — presence = the user with that uid liked.
+//                                       Doc id must equal the writer's uid.
+// posts/{slug}/comments/{commentId}  — public-readable; only the author can
+//                                       delete; nobody can edit after the fact.
+//
+// Deploy with:
+//   firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Site owner / maintainer. Mirrored in src/auth/owner.ts — keep in sync.
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email == 'blakelabs57@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Collection-group reads — the dashboard runs queries like
+    // `collectionGroup('comments').orderBy('createdAt').limit(25)` and
+    // count aggregates across `likes`. The wildcard match makes those
+    // queries pass rules; the specific path rules below still govern writes.
+    match /{path=**}/comments/{commentId} {
+      allow read: if true;
+    }
+    match /{path=**}/likes/{uid} {
+      allow read: if true;
+    }
+
+    // users/{uid}            — profile (display name + chosen username)
+    // usernames/{lowername}  — reservation doc. Firestore `create` rules only
+    //                          match when the doc doesn't exist, so this gives
+    //                          us atomic uniqueness without a transaction.
+    match /users/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.username is string
+        && request.resource.data.username.matches('^[a-z0-9_]{3,20}$')
+        && request.resource.data.keys().hasOnly(
+             ['username', 'displayName', 'photoURL', 'providerId', 'createdAt']
+           );
+      // Username is immutable post-claim. Profile is otherwise frozen for now
+      // — open this up later if you add a profile-edit UI.
+      allow update, delete: if false;
+    }
+
+    match /usernames/{name} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && name.matches('^[a-z0-9_]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt']);
+      allow update: if false;
+      // Owner can release their name (used if/when account is deleted).
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.uid;
+    }
+
+    // chronicles/{slug} — dashboard-managed blog posts (Markdown body).
+    // MDX posts live in /content/chronicles/*.mdx and never touch Firestore.
+    match /chronicles/{slug} {
+      // Public can read non-hidden posts. Owner sees everything.
+      allow read: if resource.data.hidden == false || isOwner();
+      // Only the site owner can create, edit, or remove chronicles.
+      // Slug must match the doc id and look URL-friendly.
+      allow create: if isOwner()
+        && request.resource.data.slug == slug
+        && slug.matches('^[a-z0-9][a-z0-9-]{1,60}$')
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isOwner()
+        && request.resource.data.slug == resource.data.slug;
+      allow delete: if isOwner();
+    }
+
+    // whispers/{id}  — site-wide guestbook feed (separate from per-post
+    // comments). Visible only to signed-in travelers.
+    match /whispers/{id} {
+      allow read: if request.auth != null;
+
+      allow create: if request.auth != null
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 240
+        && request.resource.data.authorName is string
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly(
+             ['text', 'authorName', 'authorId', 'authorPhoto', 'createdAt']
+           );
+
+      // Whispers are immutable once posted.
+      allow update: if false;
+
+      // Author can remove their own whisper. Owner can remove any.
+      allow delete: if request.auth != null
+        && (request.auth.uid == resource.data.authorId || isOwner());
+    }
+
+    match /posts/{slug} {
+      // Anyone can read the like count.
+      allow read: if true;
+
+      // Only signed-in users can mutate the post doc, and only the
+      // `likeCount` field, and only by +/- 1. Uses diff() so the rule
+      // doesn't break if the doc grows other fields later.
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['likeCount'])
+        && request.resource.data.likeCount == 1;
+
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount'])
+        && request.resource.data.likeCount is int
+        && (
+          request.resource.data.likeCount == resource.data.likeCount + 1 ||
+          request.resource.data.likeCount == resource.data.likeCount - 1
+        );
+
+      allow delete: if false;
+
+      match /likes/{uid} {
+        // Anyone can read (lets the client check whether a given uid liked).
+        allow read: if true;
+
+        // Only the user themselves can create / delete their like doc.
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['createdAt']);
+        allow delete: if request.auth != null && request.auth.uid == uid;
+        allow update: if false;
+      }
+
+      match /comments/{commentId} {
+        allow read: if true;
+
+        // Only signed-in users can post; payload must match the author and
+        // include the expected fields. Body is capped at 2000 chars.
+        allow create: if request.auth != null
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 2000
+          && request.resource.data.displayName is string
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.keys().hasOnly(
+               ['uid', 'displayName', 'photoURL', 'body', 'createdAt']
+             );
+
+        // Comments are immutable once posted (no edits).
+        allow update: if false;
+
+        // Author can delete their own comment. Site owner can delete any.
+        allow delete: if request.auth != null
+          && (request.auth.uid == resource.data.uid || isOwner());
+      }
+    }
+  }
+}

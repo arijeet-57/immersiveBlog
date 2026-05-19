@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
+import { useIsOwner } from '../auth/owner';
 import ThemeSwitcher from './ThemeSwitcher';
 
 const brandWrap: CSSProperties = {
@@ -80,6 +81,7 @@ const ITEMS = [
 
 export default function Hud() {
   const { user, signOut } = useAuth();
+  const isOwner = useIsOwner();
 
   return (
     <>
@@ -102,6 +104,19 @@ export default function Hud() {
             {it.label.toUpperCase()}
           </NavLink>
         ))}
+        {isOwner && (
+          <NavLink
+            to="/dashboard"
+            style={({ isActive }) => ({
+              ...linkBase,
+              ...(isActive ? linkActive : null),
+              color: isActive ? '#fff' : 'rgba(190, 210, 255, 0.92)',
+            })}
+            title="Maintainer dashboard"
+          >
+            DASHBOARD
+          </NavLink>
+        )}
         {user && (
           <>
             {user.photoURL ? (

@@ -2,9 +2,14 @@ import type { CSSProperties } from 'react';
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import GlassPanel from './GlassPanel';
 import OverlayControls from './OverlayControls';
+import PostInteractions from './PostInteractions';
 import { getPost } from '../content/posts';
+import { useFirestoreChronicle } from '../content/firestoreChronicles';
+import { useIsOwner } from '../auth/owner';
 
 const overlay: CSSProperties = {
   position: 'fixed',
@@ -14,7 +19,6 @@ const overlay: CSSProperties = {
   placeItems: 'center',
   padding: '88px 24px 32px',
   pointerEvents: 'auto',
-  // Subtle dim of the world behind without obscuring it.
   background:
     'radial-gradient(ellipse at center, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.55) 100%)',
 };
@@ -34,9 +38,6 @@ const headerStyle: CSSProperties = {
 const bodyStyle: CSSProperties = {
   padding: '20px 32px 32px',
   overflowY: 'auto',
-  // Flex children need an explicit min-height: 0 to allow them to shrink
-  // below their content height — without this, overflow never triggers
-  // inside the GlassPanel flex column and the page scrolls instead.
   minHeight: 0,
   flex: 1,
   fontSize: 15,
@@ -47,7 +48,10 @@ const bodyStyle: CSSProperties = {
 export default function ChronicleReader() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const post = getPost(slug);
+  const mdxPost = getPost(slug);
+  // Always check Firestore — a promoted version of an MDX post should win.
+  const { chronicle, loading, notFound } = useFirestoreChronicle(slug);
+  const owner = useIsOwner();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -57,12 +61,49 @@ export default function ChronicleReader() {
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate]);
 
-  if (!post) {
+  const visibleFirestore = chronicle && (!chronicle.hidden || owner);
+  // Firestore version takes priority, BUT if its body is empty (a "promote
+  // shell" created when an MDX post was first hidden/pinned), we still render
+  // the MDX file body — flags are honoured, content stays.
+  const useFirestoreBody = !!visibleFirestore && !!chronicle.body?.trim();
+
+  if (useFirestoreBody) {
+    return (
+      <ReaderShell
+        post={{
+          slug: chronicle!.slug,
+          title: chronicle!.title,
+          date: chronicle!.date,
+          author: chronicle!.author,
+          excerpt: chronicle!.excerpt,
+          body: chronicle!.body,
+        }}
+        kind="firestore"
+      />
+    );
+  }
+
+  // Render MDX file — either there's no Firestore doc, or the Firestore doc
+  // is a body-less flag override and metadata visibility is already enforced.
+  if (mdxPost && (!chronicle?.hidden || owner)) {
+    return <ReaderShell post={mdxPost} kind="mdx" />;
+  }
+
+  if (loading) {
+    return (
+      <div style={overlay} onClick={() => navigate('/chronicles')}>
+        <GlassPanel style={panelStyle}>
+          <OverlayControls closeTo="/chronicles" />
+          <div style={{ padding: '36px 32px', opacity: 0.6 }}>Unfurling…</div>
+        </GlassPanel>
+      </div>
+    );
+  }
+
+  if (notFound || !chronicle) {
     return (
       <>
-        <Helmet>
-          <title>Not found · Chronicles · Ethereal Valley</title>
-        </Helmet>
+        <Helmet><title>Not found · Chronicles · Ethereal Valley</title></Helmet>
         <div style={overlay} onClick={() => navigate('/chronicles')}>
           <GlassPanel style={panelStyle}>
             <OverlayControls closeTo="/chronicles" />
@@ -77,6 +118,27 @@ export default function ChronicleReader() {
     );
   }
 
+  return null;
+}
+
+interface ReaderPost {
+  slug: string;
+  title: string;
+  date: string;
+  author: string;
+  excerpt: string;
+  Component?: React.ComponentType;
+  body?: string;
+}
+
+function ReaderShell({
+  post,
+  kind,
+}: {
+  post: ReaderPost;
+  kind: 'mdx' | 'firestore';
+}) {
+  const navigate = useNavigate();
   const Body = post.Component;
 
   return (
@@ -114,23 +176,10 @@ export default function ChronicleReader() {
               >
                 CHRONICLE · {post.date}
               </div>
-              <h1
-                style={{
-                  margin: 0,
-                  fontSize: 26,
-                  letterSpacing: '0.01em',
-                  fontWeight: 500,
-                }}
-              >
+              <h1 style={{ margin: 0, fontSize: 26, letterSpacing: '0.01em', fontWeight: 500 }}>
                 {post.title}
               </h1>
-              <div
-                style={{
-                  marginTop: 8,
-                  fontSize: 12.5,
-                  opacity: 0.6,
-                }}
-              >
+              <div style={{ marginTop: 8, fontSize: 12.5, opacity: 0.6 }}>
                 by {post.author}
               </div>
             </header>
@@ -139,7 +188,14 @@ export default function ChronicleReader() {
               style={bodyStyle}
               data-lenis-prevent
             >
-              <Body />
+              {kind === 'mdx' && Body ? (
+                <Body />
+              ) : (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {post.body ?? ''}
+                </ReactMarkdown>
+              )}
+              <PostInteractions slug={post.slug} />
             </article>
           </GlassPanel>
         </div>
