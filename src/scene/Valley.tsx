@@ -37,10 +37,14 @@ const VALLEY_PROPS_DEPTH = VALLEY_PROPS_Z_NEAR - VALLEY_Z_FAR;
 
 // Counts tuned for steady 60fps. Instanced meshes are one draw call each but
 // the GPU still runs the vertex shader per-instance × per-vertex, so total
-// vertex throughput is the bottleneck, not draw-call count.
-const FLOWER_COUNT = 80000;
+// vertex throughput is the bottleneck, not draw-call count. The valley
+// flower is a ~100-vertex mesh (stem + 6 petals + center), so its instance
+// count dominates frame time — kept well below the old 80k, which alone
+// pushed ~8M verts/frame and was a major cause of scroll chop. The carpet
+// still reads as dense at 45k because the flowers are small and overlapping.
+const FLOWER_COUNT = 45000;
 const LAVENDER_COUNT = 10000;
-const GRASS_COUNT = 30000;
+const GRASS_COUNT = 18000;
 const TWIG_COUNT = 900;
 const BUSH_COUNT = 2000;
 const LEAF_COUNT = 6000;

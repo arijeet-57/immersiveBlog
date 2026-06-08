@@ -32,10 +32,12 @@ import { FOREST_SMOG_PERCENTAGE } from './Environment';
 // vs needles for both surfaces in one draw call per InstancedMesh.
 
 const TREE_COUNT = 150;
-// Was 1,000,000 — the per-frame vertex-shader cost on that many instances
-// was the dominant frame-time hit. 250k still reads as a dense forest floor
-// because the blades are small and depth-faded.
-const GRASS_COUNT = 800000;
+// Was 1,000,000, then 800,000 — the per-frame vertex-shader cost on that many
+// instances was the dominant frame-time hit and the main source of scroll
+// chop. 300k still reads as a dense forest floor because the blades are small,
+// depth-faded, and proximity-culled to the strips near the camera (so only
+// ~150k are actually drawn at any scroll position).
+const GRASS_COUNT = 300000;
 const BUSH_COUNT = 1000;
 const FERN_COUNT = 400;
 

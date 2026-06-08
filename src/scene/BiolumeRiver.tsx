@@ -83,10 +83,16 @@ function buildBasinGeometry(): BufferGeometry {
     for (let j = 0; j <= 1; j++) {
       const u = j;
       const off = (u - 0.5) * 2 * BASIN_HALF_WIDTH;
-      // Basin Y is well below the river surface (y=0.14) so the two never
-      // z-fight; polygonOffset on the material pulls it cleanly above the
-      // world ground plane (y=-0.02) so the bank-side edge is also safe.
-      positions.push(point.x + side.x * off, 0.04, point.z + side.z * off);
+      // Basin Y is chosen to sit in the clear band between two neighbours:
+      //   • well above the world ground plane (y=-0.02), so it shows as the
+      //     wet-earth substrate on the flower-field side, and
+      //   • decisively below the Valley terrain's near edge (min y≈0.05),
+      //     so where the two overlap on the FOREST side (z ≈ -32 → -39) the
+      //     terrain always wins the depth test and cleanly occludes the
+      //     basin — no coplanar z-fighting. 0.01 keeps ~0.03 of clearance to
+      //     the ground below and ~0.04 to the terrain above, both far larger
+      //     than the depth-buffer epsilon at this viewing distance.
+      positions.push(point.x + side.x * off, 0.01, point.z + side.z * off);
     }
   }
   for (let i = 0; i < SEGMENTS_LEN; i++) {
@@ -746,18 +752,18 @@ export default function BiolumeRiver() {
       <mesh geometry={basinGeometry} frustumCulled={false} renderOrder={-1}>
         {/* Fixed ground color (same in every theme) so the basin always
             matches the surrounding forest floor and never changes hue
-            with the mode. polygonOffset pushes the basin reliably above
-            the world ground plane so the two never z-fight at the
-            shoreline, which was the source of the flickering "glitch"
-            on the forest side of the river. */}
-        <meshBasicMaterial
-          color={BASIN_COLOR}
-          toneMapped={false}
-          fog
-          polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
-        />
+            with the mode.
+
+            NOTE: no polygonOffset. It was added to lift the basin above the
+            world ground plane, but polygonOffsetFactor is scaled by the
+            polygon's depth slope — which blows up when the camera skims the
+            basin at a grazing angle (the forest approach). That pushed the
+            basin through the overlapping Valley terrain in patches and was
+            the real source of the flickering "glitch" on the forest-side
+            bank. Vertical separation (basin y=0.01, terrain min y≈0.05,
+            ground y=-0.02) now keeps the depth ordering unambiguous from
+            every angle, so the offset is unnecessary and harmful. */}
+        <meshBasicMaterial color={BASIN_COLOR} toneMapped={false} fog />
       </mesh>
       <mesh geometry={geometry} material={material} frustumCulled={false} />
       {/* Riverbank rocks: boulders, mid rocks, pebbles */}
